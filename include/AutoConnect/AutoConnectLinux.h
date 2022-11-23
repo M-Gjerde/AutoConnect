@@ -10,7 +10,7 @@
 #include <mutex>
 #include "AutoConnect/ThreadPool.h"
 
-#define NUM_WORKER_THREADS 3
+#define NUM_WORKER_THREADS 5
 
 class AutoConnectLinux {
 
@@ -25,11 +25,13 @@ public:
 
         bool supports = true;
         bool available = true;
+        bool checkingForCamera = false;
         std::vector<std::string> IPAddresses;
         std::vector<std::string> searchedIPs;
         std::string description;
         std::string ifName;
         uint32_t ifIndex = 0;
+        std::vector<std::string> cameraIPAddresses;
 
         bool isSearched(const std::string& ip){
             for (const auto &searched: searchedIPs){
@@ -37,6 +39,15 @@ public:
                     return true;
             }
             return false;
+        }
+
+        std::string sendAdapterResult(){
+            if (cameraIPAddresses.empty())
+                return "";
+            char buf[255];
+            sprintf(buf, "Adapter: %s, IP:%s, ifIndex:%s", ifName.c_str(), cameraIPAddresses.back().c_str(), std::to_string(ifIndex).c_str());
+
+            return buf;
         }
 
     };
@@ -55,6 +66,7 @@ public:
     bool m_ScanAdapters = true;
     std::vector<Adapter> m_Adapters;
     std::mutex m_AdaptersMutex;
+    std::queue<std::string> m_LogQueue;
 
     /**
      * @Brief Starts the search for camera given a list containing network adapters Search is done in another thread

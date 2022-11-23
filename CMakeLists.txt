@@ -4,12 +4,10 @@ set (CMAKE_CXX_STANDARD 20)
 
 include_directories("include")
 
-option(BUILD_STANDALONE "build this executable without viewer" ON)
+option(BUILD_STANDALONE "build this executable without viewer. Manual link to LibMultiSense" ON)
 
 if (BUILD_STANDALONE)
-    set(LIBMULTISENSE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/LibMultiSense/source/LibMultiSense)
-    include_directories(${LIBMULTISENSE_DIR})
-    add_subdirectory(${LIBMULTISENSE_DIR})
+    include(cmake/Common.cmake)
 else()
     message("Building integrated version")
 endif()

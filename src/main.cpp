@@ -30,12 +30,7 @@
 int main(){
 
     AutoConnectLinux autoConnect;
-
     autoConnect.run();
-    // Run scan for a second before we spawn threads to listen for each adapter
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-
 
     return 0;
 }
