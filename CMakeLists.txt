@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.2)
 project(AutoConnect LANGUAGES CXX)
-set (CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 20)
 
 include_directories("include")
 
@@ -24,13 +24,17 @@ if (WIN32)
     add_subdirectory(WinPcap)
     include_directories("include/WinPcap")
 
-    add_subdirectory(getopt)
+    add_subdirectory("getopt")
 
     add_library(LibAutoConnect STATIC src/AutoConnectWindows.cpp)
-    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi getopt)
+    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi)
 
     add_executable(AutoConnect src/main.cpp)
-    target_link_libraries(AutoConnect LibAutoConnect)
+    target_link_libraries(AutoConnect LibAutoConnect getopt)
+
+    add_executable(WinReader src/WinReader.cpp)
+    target_link_libraries(WinReader user32)
+
     # create a list of files to copy
     set(THIRD_PARTY_DLLS
             ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll

@@ -13,6 +13,13 @@
 
 #include <winsock2.h>
 #include <iostream>
+#define BUF_SIZE 256
+TCHAR szName[]=TEXT("Global\\MyFileMappingObject");
+TCHAR szMsg[]=TEXT("Message from first process.");
+#include <stdio.h>
+#include <conio.h>
+#include <tchar.h>
+
 #pragma comment(lib, "ws2_32.lib")
 
 //
@@ -88,6 +95,43 @@ void AutoConnectWindows::getMessage(caddr_t memPtr, sem_t *semPtr) {
 void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     auto time = std::chrono::steady_clock::now();
+    HANDLE hMapFile;
+    LPCTSTR pBuf;
+
+    hMapFile = CreateFileMapping(
+            INVALID_HANDLE_VALUE,    // use paging file
+            NULL,                    // default security
+            PAGE_READWRITE,          // read/write access
+            0,                       // maximum object size (high-order DWORD)
+            BUF_SIZE,                // maximum object size (low-order DWORD)
+            szName);                 // name of mapping object
+
+    if (hMapFile == NULL)
+    {
+        _tprintf(TEXT("Could not create file mapping object (%lu).\n"),
+                 GetLastError());
+        return;
+    }
+    pBuf = (LPTSTR) MapViewOfFile(hMapFile,   // handle to map object
+                                  FILE_MAP_ALL_ACCESS, // read/write permission
+                                  0,
+                                  0,
+                                  BUF_SIZE);
+
+    if (pBuf == NULL)
+    {
+        _tprintf(TEXT("Could not map view of file (%lu).\n"),
+                 GetLastError());
+
+        CloseHandle(hMapFile);
+
+        return;
+    }
+
+
+
+
+
     if (enableIPC)
         ;
     /*
@@ -138,12 +182,15 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
                 }
             }
         }
+        app->log("Copied memory");
+        CopyMemory((PVOID)pBuf, szMsg, (_tcslen(szMsg) * sizeof(TCHAR)));
+
         //app->sendMessage(memPtr, semPtr);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
         //app->getMessage(memPtr, semPtr);
         auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - time);
-        if (time_span.count() > 30) {
+        if (time_span.count() > 1000) {
             app->log("Time limit of 30s reached. Quitting..");
             break;
         }
@@ -162,6 +209,9 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
     }
     app->m_IsRunning = false;
     */
+
+    UnmapViewOfFile(pBuf);
+    CloseHandle(hMapFile);
 }
 
 void AutoConnectWindows::adapterScan(void *ctx) {

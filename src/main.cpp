@@ -25,8 +25,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include "Windows.h"
-#include "getopt.h"
 #include "AutoConnect/AutoConnectWindows.h"
+#include "../getopt/getopt.h"
+
 #else
 #include "AutoConnect/AutoConnectLinux.h"
 #include <stdio.h>
@@ -38,6 +39,7 @@
 #include <semaphore.h>
 #include <string.h>
 #include <csignal>
+#include <getopt.h>
 #endif
 
 volatile bool stopProgram = false;
@@ -84,7 +86,8 @@ int main(int argc, char **argv) {
     if (argc == 1)
         usage(*argv);
 
-    while (-1 != (c = getopt(argc, argv, "i:c:")))
+    char * a = (char*) "i:c:";
+    while (-1 != (c = getopt(argc, argv, a)))
         switch (c) {
             case 'i':
                 runWithIpc = std::string(optarg) == "on";
