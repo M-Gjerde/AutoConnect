@@ -13,56 +13,155 @@
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
 #include <mutex>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <sys/stat.h>
 
 #include "AutoConnect/AutoConnectLinux.h"
 #include "MultiSense/details/channel.hh"
 
+#define ByteSize 65536
+#define BackingFile "/mem"
+#define AccessPerms 0777
+#define SemaphoreName "sem"
 
-void AutoConnectLinux::run() {
+void AutoConnectLinux::reportAndExit(const char *msg) {
+    log("%s ", msg);
+    m_IsRunning = false;
+}
 
-    while (true) {
+void AutoConnectLinux::sendMessage(caddr_t memPtr, sem_t *semPtr) {
+    std::scoped_lock<std::mutex> lock(m_logQueueMutex);
+    if (semPtr == (void *) -1)
+        reportAndExit("sem_open");
+    strcpy(memPtr, to_string(out).c_str());
+    if (sem_post(semPtr) < 0)
+        reportAndExit("sem_post");
+}
+
+void AutoConnectLinux::getMessage(caddr_t memPtr, sem_t *semPtr) {
+    if (semPtr == (void *) -1)
+        reportAndExit("sem_open");
+
+    std::string str(memPtr + (ByteSize / 2));
+
+    memset(memPtr + (ByteSize / 2), 0x00, ByteSize / 2);
+    if (sem_post(semPtr) < 0)
+        reportAndExit("sem_post");
+
+    if (!str.empty()) {
+        auto json = nlohmann::json::parse(str);
+
+        if (json.contains("Command")) {
+            if (json["Command"] == "Stop") {
+                log("Stopping auto connect");
+                sendMessage(memPtr, semPtr);
+                cleanUp();
+            }
+        }
+    }
+}
+
+void AutoConnectLinux::runInternal(void *ctx, bool enableIPC) {
+    auto *app = static_cast<AutoConnectLinux *>(ctx);
+    auto time = std::chrono::steady_clock::now();
+
+    int fd = -1;
+    caddr_t memPtr;
+    sem_t *semPtr;
+    mode_t old_umask = umask(0);
+
+    if (enableIPC) {
+        fd = shm_open(BackingFile,      /* name from smem.h */
+                      O_RDWR | O_CREAT, /* read/write, create if needed */
+                      AccessPerms);     /* access permissions */
+        if (fd < 0) app->reportAndExit("Can't open shared mem segment...");
+
+        ftruncate(fd, ByteSize); /* get the bytes */
+
+        memPtr = static_cast<caddr_t>(mmap(NULL,       /* let system pick where to put segment */
+                                           ByteSize,   /* how many bytes */
+                                           PROT_READ | PROT_WRITE, /* access protections */
+                                           MAP_SHARED, /* mapping visible to other processes */
+                                           fd,         /* file descriptor */
+                                           0));         /* offset: start at 1st byte */
+
+        if ((caddr_t) -1 == memPtr) app->reportAndExit("Can't get segment...");
+
+
+        //app->log("shared mem opened: [0...", ByteSize - 1, "] bytes");
+        //app->log("descriptor file:       /dev/shm ", BackingFile);
+
+        semPtr = sem_open(SemaphoreName, /* name */
+                          O_CREAT,       /* create the semaphore */
+                          AccessPerms,   /* protection perms */
+                          0);            /* initial value */
+
+    }
+
+    while (app->m_IsRunning) {
+        // Find a list of available adapters
         {
-            std::scoped_lock<std::mutex> lock(m_AdaptersMutex);
-            for (auto &item: m_Adapters) {
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            for (auto &item: app->m_Adapters) {
                 if (item.supports && item.available) {
                     item.available = false;
-                    m_Pool->Push(AutoConnectLinux::listenOnAdapter, this, &item);
+                    app->m_Pool->Push(AutoConnectLinux::listenOnAdapter, app, &item);
                 }
             }
         }
 
+        // Add a task to check for cameras on an adapter
         {
-            std::scoped_lock<std::mutex> lock(m_AdaptersMutex);
-            for (auto &item: m_Adapters) {
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            for (auto &item: app->m_Adapters) {
                 if (!item.IPAddresses.empty() && !item.checkingForCamera) {
-                    m_Pool->Push(AutoConnectLinux::checkForCamera, this, &item);
+                    app->m_Pool->Push(AutoConnectLinux::checkForCamera, app, &item);
                     item.checkingForCamera = true;
                 }
             }
         }
 
-        {
-            std::scoped_lock<std::mutex> lock(m_AdaptersMutex);
-            if (!m_LogQueue.empty()) {
-                // Send Result through anonymous pipe or to console
-                printf("Result: %s\n", m_LogQueue.front().c_str());
-                m_LogQueue.pop();
-            }
-        }
+
+        app->sendMessage(memPtr, semPtr);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        app->getMessage(memPtr, semPtr);
+        auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
+                std::chrono::steady_clock::now() - time);
+        if (time_span.count() > 30) {
+            app->log("Time limit of 30s reached. Quitting..");
+            break;
+        }
+
     }
+    app->log("Exiting autoconnect");
+    app->notifyStop();
+
+    app->sendMessage(memPtr, semPtr);
+    if (enableIPC) {
+        /* clean up */
+        munmap(memPtr, ByteSize); /* unmap the storage */
+        close(fd);
+        sem_close(semPtr);
+        umask(old_umask);
+        shm_unlink(BackingFile); /* unlink from the backing file */
+    }
+
+    app->m_IsRunning = false;
 }
 
 void AutoConnectLinux::adapterScan(void *ctx) {
     auto *app = static_cast<AutoConnectLinux *>(ctx);
-
+    app->log("Performing adapter scan");
     while (app->m_ScanAdapters) {
         // Get list of interfaces
         std::vector<Adapter> adapters;
         auto ifn = if_nameindex();
         // If no interfaces. This turns to null if there is no interfaces for a few seconds
         if (!ifn) {
-            fprintf(stderr, "if_nameindex error: %s\n", strerror(errno));
+            app->log("if_nameindex error: ", strerror(errno));
             continue;
         }
         auto fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -112,7 +211,9 @@ void AutoConnectLinux::adapterScan(void *ctx) {
                 }
                 if (!exist) {
                     app->m_Adapters.emplace_back(adapter);
-                    printf("Found adapter %s %d supported = %d\n", adapter.ifName.c_str(), adapter.ifIndex, adapter.supports);
+                    app->log("Found adapter: ", adapter.ifName, " index: ", adapter.ifIndex, " supports: ",
+                             adapter.supports);
+
                 }
             }
         }
@@ -124,9 +225,12 @@ void AutoConnectLinux::adapterScan(void *ctx) {
 void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectLinux *>(ctx);
     // Submit request for a socket descriptor to look up interface.
+    app->log("Configuring adapter: ", adapter->ifName);
+
     int sd = 0;
     if ((sd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) < 0) {
-        perror("socket() failed to get socket descriptor for using ioctl() ");
+        app->log("socket() Failed to get socket descriptor for using ioctl() ", adapter->ifName, " : ",
+                 strerror(errno));
     }
 
     struct sockaddr_ll addr{};
@@ -136,8 +240,7 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
     addr.sll_protocol = htons(ETH_P_ALL);
     addr.sll_ifindex = (int) adapter->ifIndex;
     if (bind(sd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-        std::cout << "ERROR IN BIND: " << strerror(errno) << std::endl;
-        perror("Bind");
+        app->log("Error in bind: ", adapter->ifName, " : ", strerror(errno));
     }
     // set the network card in promiscuos mode//
     // An ioctl() request has encoded in it whether the argument is an in parameter or out parameter
@@ -146,27 +249,29 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
     struct ifreq ethreq{};
     strncpy(ethreq.ifr_name, adapter->ifName.c_str(), IF_NAMESIZE);
     if (ioctl(sd, SIOCGIFFLAGS, &ethreq) == -1) {
-        std::cout << "Error: " << adapter->ifName << "socket: " << sd << std::endl;
-        perror("SIOCGIFFLAGS: ioctl");
+        app->log("Error in ioctl get flags: ", adapter->ifName, " : ", strerror(errno));
     }
     ethreq.ifr_flags |= IFF_PROMISC;
 
     if (ioctl(sd, SIOCSIFFLAGS, &ethreq) == -1) {
-        perror("SIOCSIFFLAGS: ioctl");
+        app->log("Error in ioctl set flags: ", adapter->ifName, " : ", strerror(errno));
     }
 
     int saddr_size, data_size;
     struct sockaddr saddr{};
     auto *buffer = (unsigned char *) malloc(IP_MAXPACKET + 1);
     auto startListenTime = std::chrono::steady_clock::now();
-    float timeOut = 10.0f;
-    while (true) {
+    float timeOut = 15.0f;
+    app->log("Performing MultiSense camera search on adapter: ", adapter->ifName);
+    while (app->m_ListenOnAdapter) {
         // Timeout handler
         // Will timeout MAX_CONNECTION_ATTEMPTS times until retrying on new adapter
-        auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
+        auto timeSpan = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - startListenTime);
-        // 10 Seconds, then alert user and break loop
-        saddr_size = sizeof saddr;
+        if (timeSpan.count() > timeOut)         // x Seconds, then break loop
+            break;
+
+        saddr_size = sizeof(saddr);
         //Receive a packet
         data_size = (int) recvfrom(sd, buffer, IP_MAXPACKET, MSG_DONTWAIT, &saddr,
                                    (socklen_t *) &saddr_size);
@@ -185,19 +290,18 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
             address = inet_ntoa(ip_addr);
             // If not already in vector
 
-
-
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
                 adapter->IPAddresses.end()) {
+                app->log("Address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
-                std::cout << "Address: " << address << " On adapter: " << adapter->ifName << std::endl;
-
             }
         }
     }
 
-    std::cout << "Finished search on " << adapter->ifName << std::endl;
+    //std::cout << "Finished search on " << adapter->ifName << std::endl;
+    app->log("Finished search on: ", adapter->ifName.c_str());
+
     free(buffer);
 }
 
@@ -224,12 +328,10 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     }
     int fd = -1;
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("socket() failed to get socket descriptor for using ioctl() ");
+        app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
     }
 
-    std::cout << "Checking for camera on: " << address << " using: " << adapterName << std::endl;
-    //std::cout << "Created socket: " << fd << ". Attempting to set new address on device  " << adapter->ifName << std::endl;
-
+    app->log("Checking for camera on ", address, " using: ", adapterName);
     // Set the host ip address to the same subnet but with *.2 at the end.
     std::string hostAddress = address;
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
@@ -248,49 +350,51 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     /// note: prepare the two struct sockaddr_in
     inet_addr.sin_family = AF_INET;
     inet_pton(AF_INET, hostAddress.c_str(), &(inet_addr.sin_addr));
-
     subnet_mask.sin_family = AF_INET;
     inet_pton(AF_INET, "255.255.255.0", &(subnet_mask.sin_addr));
-
     // Call ioctl to configure network devices
     /// put addr in ifr structure
     memcpy(&(ifr.ifr_addr), &inet_addr, sizeof(struct sockaddr));
     int ioctl_result = ioctl(fd, SIOCSIFADDR, &ifr);  // Set IP address
     if (ioctl_result < 0) {
-        fprintf(stderr, "ioctl SIOCSIFADDR: %s\n", strerror(errno));
+        app->log("Error in ioctl set address: ", adapter->ifName, " : ", strerror(errno));
     }
-
     /// put mask in ifr structure
     memcpy(&(ifr.ifr_addr), &subnet_mask, sizeof(struct sockaddr));
     ioctl_result = ioctl(fd, SIOCSIFNETMASK, &ifr);   // Set subnet mask
     if (ioctl_result < 0) {
-        fprintf(stderr, "ioctl SIOCSIFNETMASK: ");
+        app->log("Error in ioctl set netmask: ", adapter->ifName, " : ", strerror(errno));
     }
-
     // Add a delay to let changes propagate through system
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
     auto *channelPtr = crl::multisense::Channel::Create(address, adapterName);
 
     {
-        std::cout << "Waiting for lock" << std::endl;
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
 
         if (channelPtr != nullptr) {
-            //std::cout << "Found camera on: " << address << std::endl;
+            app->log("Found camera on: ", address.c_str());
+            crl::multisense::system::DeviceInfo info;
+            channelPtr->getDeviceInfo(info);
+            adapter->cameraNameList.emplace_back(info.name);
             crl::multisense::Channel::Destroy(channelPtr);
             adapter->cameraIPAddresses.emplace_back(address);
-            app->m_LogQueue.push(adapter->sendAdapterResult());
-
+            {
+                std::scoped_lock<std::mutex> lock2(app->m_logQueueMutex);
+                app->out["Result"].emplace_back(adapter->sendAdapterResult());
+            }
         } else {
-            std::cout << "No camera on: " << address << std::endl;
-            adapter->cameraIPAddresses.emplace_back(address);
+            app->log("No camera on ", address);
         }
-
         adapter->searchedIPs.emplace_back(address);
-        //std::cout << "Camera interface: " << adapter->ifName << " name: " << adapter->ifName << std::endl;
         adapter->checkingForCamera = false;
     }
+}
+
+void AutoConnectLinux::cleanUp() {
+    m_IsRunning = false;
+    m_ListenOnAdapter = false;
+    m_ScanAdapters = false;
 }
 /*
 void AutoConnectLinux::run(void *ctx) {
@@ -414,7 +518,7 @@ void AutoConnectLinux::run(void *ctx) {
             if ((time(nullptr) - app->startTime) > TIMEOUT_INTERVAL_SECONDS &&
                 app->connectAttemptCounter < MAX_CONNECTION_ATTEMPTS) {
                 app->startTime = time(nullptr);
-                printf("\n");
+                fprintf(stderr,"\n");
                 str = "Timeout reached. Retrying... (" + std::to_string(app->connectAttemptCounter + 1) + "/" +
                       std::to_string(MAX_CONNECTION_ATTEMPTS) + ")";
                 app->m_EventCallback(str, app->m_Context, 0);
@@ -424,7 +528,7 @@ void AutoConnectLinux::run(void *ctx) {
             } else if ((time(nullptr) - app->startTime) > TIMEOUT_INTERVAL_SECONDS &&
                        app->connectAttemptCounter >= MAX_CONNECTION_ATTEMPTS) {
                 app->startTime = time(nullptr);
-                printf("\n");
+                fprintf(stderr,"\n");
                 str = "Timeout reached. Switching to next supported adapter";
                 app->m_EventCallback(str, app->m_Context, 2);
                 app->connectAttemptCounter = 0;
@@ -543,7 +647,7 @@ AutoConnect::FoundCameraOnIp AutoConnectLinux::onFoundIp(std::string address, Re
     memcpy(&(ifr.ifr_addr), &inet_addr, sizeof(struct sockaddr));
     int ioctl_result = ioctl(camera_fd, SIOCSIFADDR, &ifr);  // Set IP address
     if (ioctl_result < 0) {
-        fprintf(stderr, "ioctl SIOCSIFADDR: %s\n", strerror(errno));
+        ffprintf(stderr,stderr, "ioctl SIOCSIFADDR: %s\n", strerror(errno));
         m_EventCallback("Error", m_Context, 0);
         return NO_CAMERA;
     }

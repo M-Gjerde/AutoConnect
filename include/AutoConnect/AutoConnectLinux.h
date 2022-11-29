@@ -8,19 +8,22 @@
 
 #include <thread>
 #include <mutex>
+#include <cstdarg>
+#include <sstream>
+#include <AutoConnect/json.hpp>
+
 #include "AutoConnect/ThreadPool.h"
 
 #define NUM_WORKER_THREADS 5
 
+
 class AutoConnectLinux {
 
 public:
-
     struct Adapter {
         Adapter() = default;
-
-        explicit Adapter(const char *name, uint32_t index) : ifName(name), ifIndex(index)
-        { // By default, we want to initialize an adapter result with a name and support status
+        explicit Adapter(const char *name, uint32_t index) : ifName(name),
+                                                             ifIndex(index) { // By default, we want to initialize an adapter result with a name and an index
         }
 
         bool supports = true;
@@ -32,62 +35,110 @@ public:
         std::string ifName;
         uint32_t ifIndex = 0;
         std::vector<std::string> cameraIPAddresses;
+        std::vector<std::string> cameraNameList;
 
-        bool isSearched(const std::string& ip){
-            for (const auto &searched: searchedIPs){
+        bool isSearched(const std::string &ip) {
+            for (const auto &searched: searchedIPs) {
                 if (searched == ip)
                     return true;
             }
             return false;
         }
 
-        std::string sendAdapterResult(){
-            if (cameraIPAddresses.empty())
-                return "";
-            char buf[255];
-            sprintf(buf, "Adapter: %s, IP:%s, ifIndex:%s", ifName.c_str(), cameraIPAddresses.back().c_str(), std::to_string(ifIndex).c_str());
+        nlohmann::json sendAdapterResult() {
+            nlohmann::json j;
+            j["Name"] = ifName;
+            j["Index"] = ifIndex;
+            j["Description"] = description;
+            j["AddressList"] = cameraIPAddresses;
+            j["CameraNameList"] = cameraNameList;
 
-            return buf;
+            return j;
         }
-
     };
 
-    ~AutoConnectLinux() {
+    ~AutoConnectLinux() = default;
 
-    }
+    explicit AutoConnectLinux(bool enableIPC, bool logToConsole = false) {
+        out = {
+                {"Name", "AutoConnect"},
+                {"Log",  {""}}
+        };
 
-    AutoConnectLinux(){
+        if (logToConsole)
+            m_LogToConsole = true;
+
         m_Pool = std::make_unique<AutoConnect::ThreadPool>(NUM_WORKER_THREADS);
-        m_Pool->Push(adapterScan, this);
+        m_IsRunning = true;
+        log("Started AutoConnect service");
+
+        m_Pool->Push(AutoConnectLinux::adapterScan, this);
+        m_Pool->Push(AutoConnectLinux::runInternal, this, enableIPC);
 
     }
 
-    std::unique_ptr<AutoConnect::ThreadPool> m_Pool;
-    bool m_ScanAdapters = true;
-    std::vector<Adapter> m_Adapters;
-    std::mutex m_AdaptersMutex;
-    std::queue<std::string> m_LogQueue;
+    [[nodiscard]] bool pollEvents() const {
+
+        return m_IsRunning;
+    }
+
+    bool m_LogToConsole = false;
 
     /**
-     * @Brief Starts the search for camera given a list containing network adapters Search is done in another thread
-    * @param vector
+     * Pushes string to message queue. Mutex protected.
+     * Adds a newline character to each message
+     * @param msg message to push onto queue
      */
-    void run();
-    /** @Brief Function to search for network adapters **/
-    /** @Brief cleans up thread**/
-    void stopAutoConnect();
-    /** @Brief Function called after a search of adapters and at least one adapter was found **/
-    /** @Brief Function called when a new IP is found. Return false if you want to keep searching or true to stop further IP searching **/
-    /** @Brief Function called when a camera has been found by a successfully connection by LibMultiSense **/
-    void onFoundCamera();
+    template<typename ...Args>
+    void log(Args &&...args) {
+        std::ostringstream stream;
+        (stream << ... << std::forward<Args>(args)) << '\n';
+
+        std::scoped_lock<std::mutex> lock(m_logQueueMutex);
+        if (out.contains("Log"))
+            out["Log"].emplace_back(stream.str());
+
+        if (m_LogToConsole)
+            std::cout << stream.str();
+    }
+
+    void notifyStop() {
+        std::scoped_lock<std::mutex> lock(m_logQueueMutex);
+
+        out["Command"] = "Stop";
+        if (m_LogToConsole)
+            std::cout << "notifyStop: " << "Stop" << std::endl;
+    }
 
     static void adapterScan(void *ctx);
-    static void listenOnAdapter(void* ctx, Adapter *adapter);
+
+    static void listenOnAdapter(void *ctx, Adapter *adapter);
+
     static void checkForCamera(void *ctx, Adapter *adapter);
 
-private:
-    static void run(void* instance);
+    void cleanUp();
 
+private:
+    nlohmann::json out;
+
+    std::unique_ptr<AutoConnect::ThreadPool> m_Pool;
+    std::vector<Adapter> m_Adapters;
+    std::mutex m_AdaptersMutex;
+    std::mutex m_logQueueMutex;
+    bool m_IsRunning = false;
+    bool m_ListenOnAdapter = true;
+    bool m_ScanAdapters = true;
+
+
+    static void run(void *instance);
+
+    static void runInternal(void *ctx, bool enableIPC);
+
+    void reportAndExit(const char *msg);
+
+    void sendMessage(caddr_t memPtr, sem_t *semPtr);
+
+    void getMessage(caddr_t memPtr, sem_t *semPtr);
 };
 
 

@@ -27,10 +27,84 @@
 
 #include "AutoConnect/AutoConnectLinux.h"
 
-int main(){
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <string.h>
+#include <csignal>
 
-    AutoConnectLinux autoConnect;
-    autoConnect.run();
+volatile bool stopProgram = false;
+
+void usage(const char *programNameP) {
+    std::cerr << "USAGE: " << programNameP << " [<options>]" << std::endl;
+    std::cerr << "Where <options> are:" << std::endl;
+    std::cerr << "\t-i on/off    : Run with IPC enabled or disabled (useful when embedding into another application)"
+              << std::endl;
+    std::cerr << "\t-c on/off    : Everthing logged to shared memory (IPC) is also logged to console (default false)"
+              << std::endl;
+    exit(1);
+}
+
+#ifdef WIN32
+BOOL WINAPI signalHandler(DWORD dwCtrlType)
+{
+    CRL_UNUSED (dwCtrlType);
+    std::cerr << "Shutting down on signal: CTRL-C" << std::endl;
+    doneG = true;
+    return TRUE;
+}
+#else
+
+void signalHandler(int sig) {
+    std::cerr << "Shutting down on signal: " << strsignal(sig) << std::endl;
+    stopProgram = true;
+}
+
+#endif
+
+
+int main(int argc, char **argv) {
+#if WIN32
+    SetConsoleCtrlHandler (signalHandler, TRUE);
+#else
+    if (getuid() != 0) {
+        std::cerr << "ERROR: This program must be run with root privileges" << std::endl;
+        exit(1);
+    }
+
+    signal(SIGINT, signalHandler);
+#endif
+
+    // Parse args
+    bool runWithIpc = false;
+    bool logToConsole = false;
+    int c;
+    if (argc == 1)
+        usage(*argv);
+
+    while (-1 != (c = getopt(argc, argv, "i:c:")))
+        switch (c) {
+            case 'i':
+                runWithIpc = std::string(optarg) == "on";
+                break;
+            case 'c':
+                logToConsole = std::string(optarg) == "on";
+                break;
+            default:
+                usage(*argv);
+                break;
+        }
+
+    AutoConnectLinux autoConnect(runWithIpc, logToConsole);
+    while (autoConnect.pollEvents() && !stopProgram) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    autoConnect.cleanUp();
 
     return 0;
 }

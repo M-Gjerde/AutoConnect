@@ -12,6 +12,8 @@ else()
     message("Building integrated version")
 endif()
 
+
+
 if (WIN32)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DVK_PROTOTYPES")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DVK_PROTOTYPES")
@@ -47,5 +49,9 @@ if(UNIX)
     target_link_libraries(LibAutoConnect -lpthread -ltbb MultiSense)
 
     add_executable(AutoConnect src/main.cpp)
-    target_link_libraries(AutoConnect LibAutoConnect)
+    target_link_libraries(AutoConnect LibAutoConnect -lrt)
+
+    add_executable(reader src/reader.cpp)
+    target_link_libraries(reader -lpthread -lrt)
+
 endif ()
