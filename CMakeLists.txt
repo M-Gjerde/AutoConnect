@@ -7,12 +7,11 @@ include_directories("include")
 option(BUILD_STANDALONE "build this executable without viewer. Manual link to LibMultiSense" ON)
 
 if (BUILD_STANDALONE)
+    message("Building standalone version")
     include(cmake/Common.cmake)
 else()
     message("Building integrated version")
 endif()
-
-
 
 if (WIN32)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DVK_PROTOTYPES")
@@ -22,17 +21,30 @@ if (WIN32)
         set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
     endif ()
 
-    # Include WinPcap headers
+    add_subdirectory(WinPcap)
+    include_directories("include/WinPcap")
 
-    # Link WinPcap library
-    add_library(winpcap STATIC IMPORTED GLOBAL)
-    set_property(TARGET winpcap APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
-    set_target_properties(winpcap PROPERTIES
-    IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG "CXX"
-    IMPORTED_LOCATION_RELEASE  "${CMAKE_CURRENT_SOURCE_DIR}/wpcap.lib")
+    add_subdirectory(getopt)
 
-    add_library(LibAutoConnect STATIC AutoConnect.h AutoConnectWindows.cpp AutoConnectWindows.h "WinRegEditor.h")
-    target_link_libraries(LibAutoConnect MultiSense winpcap iphlpapi )
+    add_library(LibAutoConnect STATIC src/AutoConnectWindows.cpp)
+    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi getopt)
+
+    add_executable(AutoConnect src/main.cpp)
+    target_link_libraries(AutoConnect LibAutoConnect)
+    # create a list of files to copy
+    set(THIRD_PARTY_DLLS
+            ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
+            ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
+            )
+    # do the copying
+    foreach (file_i ${THIRD_PARTY_DLLS})
+        add_custom_command(
+                TARGET AutoConnect
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND}
+                ARGS -E copy ${file_i} ${CMAKE_CURRENT_BINARY_DIR}
+        )
+    endforeach (file_i)
 
     if (MSVC)
         if (${CMAKE_VERSION} VERSION_LESS "3.6.0")
@@ -42,7 +54,6 @@ if (WIN32)
         endif ()
     endif ()
 endif ()
-
 if(UNIX)
     ## Linux
     add_library(LibAutoConnect STATIC src/AutoConnectLinux.cpp)

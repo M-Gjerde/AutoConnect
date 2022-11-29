@@ -1,46 +1,38 @@
-#include "AutoConnectWindows.h"
 //
 // Created by mgjer on 14/07/2022.
 //
-#ifdef _MSC_VER
-/*
- * we do not want the warnings about the old deprecated and unsecure CRT functions
- * since these examples can be compiled under *nix as well
- */
 
-#define IP_MAXPACKET 65535
 
-#define _CRT_SECURE_NO_WARNINGS
+#include "AutoConnect/AutoConnectWindows.h"
+
+#ifndef _WINDOWS_
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef WIN32_LEAN_AND_MEAN
 #endif
-#pragma comment(lib, "wpcap.lib")
-#pragma comment(lib, "iphlpapi.lib")
+
+#include <winsock2.h>
+#include <iostream>
 #pragma comment(lib, "ws2_32.lib")
 
-#define MALLOC(x) HeapAlloc(GetProcessHeap(), 0, (x))
-#define FREE(x) HeapFree(GetProcessHeap(), 0, (x))
-#define ADAPTER_HEX_NAME_LENGTH 38
-#define UNNAMED_ADAPTER "Unnamed"
+//
+// Created by magnus on 7/14/22.
+//
 
-#define _WINSOCKAPI_    // stops windows.h including winsock.h
+#include <cstring>
+#include <mutex>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <MultiSense/MultiSenseChannel.hh>
 
-#include <WinSock2.h>
+#include "AutoConnect/AutoConnectWindows.h"
+#include <WinPcap/pcap.h>
 #include <iphlpapi.h>
 
-
-#include "AutoConnectWindows.h"
-
-#pragma comment(lib, "wbemuuid.lib")
-
-#include <cstdio>
-#include <fstream>
-#include <iostream>
-#include <Iprtrmib.h>
-#include <ctime>
-#include <filesystem>
-
-#include "pcap.h"
-#include "WinRegEditor.h"
-
+#define ByteSize 65536
+#define BackingFile "/mem"
+#define AccessPerms 0777
+#define SemaphoreName "sem"
 
 struct iphdr {
     unsigned char ip_verlen;            // 4-bit IPv4 version, 4-bit header length (in 32-bit words)
@@ -56,6 +48,384 @@ struct iphdr {
 
 };
 
+void AutoConnectWindows::reportAndExit(const char *msg) {
+    log("%s ", msg);
+    m_IsRunning = false;
+}
+
+/*
+void AutoConnectWindows::sendMessage(caddr_t memPtr, sem_t *semPtr) {
+    std::scoped_lock<std::mutex> lock(m_logQueueMutex);
+    if (semPtr == (void *) -1)
+        reportAndExit("sem_open");
+    strcpy(memPtr, to_string(out).c_str());
+    if (sem_post(semPtr) < 0)
+        reportAndExit("sem_post");
+}
+
+void AutoConnectWindows::getMessage(caddr_t memPtr, sem_t *semPtr) {
+    if (semPtr == (void *) -1)
+        reportAndExit("sem_open");
+    std::string str(memPtr + (ByteSize / 2));
+    memset(memPtr + (ByteSize / 2), 0x00, ByteSize / 2);
+    if (sem_post(semPtr) < 0)
+        reportAndExit("sem_post");
+
+    if (!str.empty()) {
+        auto json = nlohmann::json::parse(str);
+
+        if (json.contains("Command")) {
+            if (json["Command"] == "Stop") {
+                log("Stopping auto connect");
+                sendMessage(memPtr, semPtr);
+                cleanUp();
+            }
+        }
+    }
+}
+ */
+
+void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
+    auto *app = static_cast<AutoConnectWindows *>(ctx);
+    auto time = std::chrono::steady_clock::now();
+    if (enableIPC)
+        ;
+    /*
+    int fd = -1;
+    caddr_t memPtr;
+    sem_t *semPtr;
+    mode_t old_umask = umask(0);
+    if (enableIPC) {
+        fd = shm_open(BackingFile,      // name from smem.h
+                      O_RDWR | O_CREAT, // read/write, create if needed
+                      AccessPerms);     // access permissions
+        if (fd < 0) app->reportAndExit("Can't open shared mem segment...");
+        ftruncate(fd, ByteSize); // get the bytes
+        memPtr = static_cast<caddr_t>(mmap(NULL,       // let system pick where to put segment
+                                           ByteSize,   // how many bytes
+                                           PROT_READ | PROT_WRITE, // access protections
+                                           MAP_SHARED, // mapping visible to other processes
+                                           fd,         // file descriptor
+                                           0));         // offset: start at 1st byte
+
+        if ((caddr_t) -1 == memPtr) app->reportAndExit("Can't get segment...");
+        semPtr = sem_open(SemaphoreName, // name
+                          O_CREAT,       // create the semaphore
+                          AccessPerms,   // protection perms
+                          0);            // initial value
+
+    }
+
+     */
+    while (app->m_IsRunning) {
+        // Find a list of available adapters
+        {
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            for (auto &item: app->m_Adapters) {
+                if (item.supports && item.available) {
+                    item.available = false;
+                    app->m_Pool->Push(AutoConnectWindows::listenOnAdapter, app, &item);
+                }
+            }
+        }
+        // Add a task to check for cameras on an adapter
+        {
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            for (auto &item: app->m_Adapters) {
+                if (!item.IPAddresses.empty() && !item.checkingForCamera) {
+                    app->m_Pool->Push(AutoConnectWindows::checkForCamera, app, &item);
+                    item.checkingForCamera = true;
+                }
+            }
+        }
+        //app->sendMessage(memPtr, semPtr);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        //app->getMessage(memPtr, semPtr);
+        auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
+                std::chrono::steady_clock::now() - time);
+        if (time_span.count() > 30) {
+            app->log("Time limit of 30s reached. Quitting..");
+            break;
+        }
+    }
+    app->log("Exiting autoconnect");
+    app->notifyStop();
+/*
+    app->sendMessage(memPtr, semPtr);
+    if (enableIPC) {
+        // clean up
+        munmap(memPtr, ByteSize);// unmap the storage
+        close(fd);
+        sem_close(semPtr);
+        umask(old_umask);
+        shm_unlink(BackingFile);// unlink from the backing file
+    }
+    app->m_IsRunning = false;
+    */
+}
+
+void AutoConnectWindows::adapterScan(void *ctx) {
+    auto *app = static_cast<AutoConnectWindows *>(ctx);
+    std::vector<Adapter> tempList;
+
+    while (app->m_ScanAdapters) {
+        tempList.clear();
+        pcap_if_t *alldevs;
+        pcap_if_t *d;
+        char errbuf[PCAP_ERRBUF_SIZE];
+
+        // Retrieve the device list
+        if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+            app->log("Error in pcap_findalldevs: ", errbuf);
+            return;
+        }
+
+
+        // Print the list
+        int i = 0;
+        std::string prefix = "\\Device\\Tcpip_";
+        const char *token = "{";
+        // Find { token in order to find correct prefix
+        for (d = alldevs; d; d = d->next) {
+            Adapter adapter(d->name, 0);
+            if (d->description)
+                adapter.description = d->description;
+            size_t found = std::string(d->name).find(token);
+            if (found != std::string::npos)
+                prefix = std::string(d->name).substr(0, found);
+        }
+
+        DWORD dwBufLen = sizeof(IP_ADAPTER_INFO);
+        PIP_ADAPTER_INFO AdapterInfo;
+        AdapterInfo = (IP_ADAPTER_INFO *) malloc(sizeof(IP_ADAPTER_INFO));
+        // Make an initial call to GetAdaptersInfo to get the necessary size into the dwBufLen variable
+        if (GetAdaptersInfo(AdapterInfo, &dwBufLen) == ERROR_BUFFER_OVERFLOW) {
+            free(AdapterInfo);
+            AdapterInfo = (IP_ADAPTER_INFO *) malloc(dwBufLen);
+            if (AdapterInfo == NULL) {
+                app->log("Error in allocating memory for GetAdaptersInfo");
+                free(AdapterInfo);
+                continue;
+            }
+        }
+        if (GetAdaptersInfo(AdapterInfo, &dwBufLen) == NO_ERROR) {
+            // Contains pointer to current adapter info
+            PIP_ADAPTER_INFO pAdapterInfo = AdapterInfo;
+            do {
+                // Somehow The integrated bluetooth adapter is considered an ethernet adapter cause of the same type in PIP_ADAPTER_INFO field "MIB_IF_TYPE_ETHERNET"
+                // I'll filter it out here assuming it has Bluetooth in its name. Just a soft error which increases running time of the auto connect feature
+                char *bleFoundInName = strstr(pAdapterInfo->Description, "Bluetooth");
+                if (bleFoundInName || pAdapterInfo->Type != MIB_IF_TYPE_ETHERNET) {
+                    pAdapterInfo = pAdapterInfo->Next;
+                    continue;
+                }
+
+                // Internal loopback device always located at index = 1. Skip it..
+                if (pAdapterInfo->Index == 1) {
+                    pAdapterInfo = pAdapterInfo->Next;
+                    continue;
+                }
+
+                Adapter adapter("Unnamed", 0);
+                adapter.supports = (pAdapterInfo->Type == MIB_IF_TYPE_ETHERNET);
+                adapter.description = pAdapterInfo->Description;
+
+                //CONCATENATE two strings safely windows workaround
+                int lenA = strlen(prefix.c_str());
+                int lenB = strlen(pAdapterInfo->AdapterName);
+                char *con = (char *) malloc(lenA + lenB + 1);
+                memcpy(con, prefix.c_str(), lenA);
+                memcpy(con + lenA, pAdapterInfo->AdapterName, lenB + 1);
+                adapter.ifName = con;
+                //adapter.networkAdapter = pAdapterInfo->AdapterName;
+                adapter.ifIndex = pAdapterInfo->Index;
+                tempList.push_back(adapter);
+                free(con);
+
+                app->log("Found Adapter: ", adapter.description, " Supports: ", adapter.supports, " ID: ", adapter.ifName);
+
+                pAdapterInfo = pAdapterInfo->Next;
+            } while (pAdapterInfo);
+        }
+        free(AdapterInfo);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
+
+void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
+    auto *app = static_cast<AutoConnectWindows *>(ctx);
+    // Submit request for a socket descriptor to look up interface.
+    app->log("Configuring adapter: ", adapter->ifName);
+
+    /*
+    int sd = 0;
+    if ((sd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) < 0) {
+        app->log("socket() Failed to get socket descriptor for using ioctl() ", adapter->ifName, " : ",
+                 strerror(errno));
+    }
+
+    struct sockaddr_ll addr{};
+    // Bind socket to interface
+    memset(&addr, 0x00, sizeof(addr));
+    addr.sll_family = AF_PACKET;
+    addr.sll_protocol = htons(ETH_P_ALL);
+    addr.sll_ifindex = (int) adapter->ifIndex;
+    if (bind(sd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+        app->log("Error in bind: ", adapter->ifName, " : ", strerror(errno));
+    }
+    // set the network card in promiscuos mode//
+    // An ioctl() request has encoded in it whether the argument is an in parameter or out parameter
+    // SIOCGIFFLAGS	0x8913		// get flags			//
+    // SIOCSIFFLAGS	0x8914		// set flags			//
+    struct ifreq ethreq{};
+    strncpy(ethreq.ifr_name, adapter->ifName.c_str(), IF_NAMESIZE);
+    if (ioctl(sd, SIOCGIFFLAGS, &ethreq) == -1) {
+        app->log("Error in ioctl get flags: ", adapter->ifName, " : ", strerror(errno));
+    }
+    ethreq.ifr_flags |= IFF_PROMISC;
+
+    if (ioctl(sd, SIOCSIFFLAGS, &ethreq) == -1) {
+        app->log("Error in ioctl set flags: ", adapter->ifName, " : ", strerror(errno));
+    }
+
+    int saddr_size, data_size;
+    struct sockaddr saddr{};
+    auto *buffer = (unsigned char *) malloc(IP_MAXPACKET + 1);
+    auto startListenTime = std::chrono::steady_clock::now();
+    float timeOut = 15.0f;
+    app->log("Performing MultiSense camera search on adapter: ", adapter->ifName);
+    while (app->m_ListenOnAdapter) {
+        // Timeout handler
+        // Will timeout MAX_CONNECTION_ATTEMPTS times until retrying on new adapter
+        auto timeSpan = std::chrono::duration_cast<std::chrono::duration<float>>(
+                std::chrono::steady_clock::now() - startListenTime);
+        if (timeSpan.count() > timeOut)         // x Seconds, then break loop
+            break;
+
+        saddr_size = sizeof(saddr);
+        //Receive a packet
+        data_size = (int) recvfrom(sd, buffer, IP_MAXPACKET, MSG_DONTWAIT, &saddr,
+                                   (socklen_t *) &saddr_size);
+        if (data_size < 0) {
+            continue;
+        }
+
+        //Now process the packet
+        auto *iph = (struct iphdr *) (buffer + sizeof(struct ethhdr));
+        struct in_addr ip_addr{};
+        std::string address;
+        if (iph->protocol == IPPROTO_IGMP) //Check the Protocol and do accordingly...
+        {
+            ip_addr.s_addr = iph->saddr;
+            address = inet_ntoa(ip_addr);
+            // If not already in vector
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
+                adapter->IPAddresses.end()) {
+                app->log("Address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
+                adapter->IPAddresses.emplace_back(address);
+            }
+        }
+    }
+
+    app->log("Finished search on: ", adapter->ifName.c_str());
+    free(buffer);
+          */
+}
+
+void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
+    std::string address;
+    std::string adapterName;
+    auto *app = static_cast<AutoConnectWindows *>(ctx);
+    {
+        std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+        bool searchedAll = true;
+        for (const auto &item: adapter->IPAddresses) {
+            if (!adapter->isSearched(item)) {
+                searchedAll = false;
+            }
+        }
+        if (searchedAll) {
+            adapter->checkingForCamera = false;
+            return;
+        }
+        address = adapter->IPAddresses.back();
+        adapterName = adapter->ifName;
+    }
+    int fd = -1;
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
+    }
+
+    app->log("Checking for camera on ", address, " using: ", adapterName);
+    // Set the host ip address to the same subnet but with *.2 at the end.
+    std::string hostAddress = address;
+    std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
+    auto ptr = hostAddress.rfind('.');
+    hostAddress.replace(ptr, last_element.length(), ".2");
+
+    /*
+    // CALL IOCTL Operations to set the address of the adapter/socket  //
+    struct ifreq ifr{};
+    /// note: no pointer here
+    struct sockaddr_in inet_addr{}, subnet_mask{};
+    // get interface name //
+    // Prepare the struct ifreq //
+    bzero(ifr.ifr_name, IFNAMSIZ);
+    strncpy(ifr.ifr_name, adapterName.c_str(), IFNAMSIZ);
+
+    /// note: prepare the two struct sockaddr_in
+    inet_addr.sin_family = AF_INET;
+    inet_pton(AF_INET, hostAddress.c_str(), &(inet_addr.sin_addr));
+    subnet_mask.sin_family = AF_INET;
+    inet_pton(AF_INET, "255.255.255.0", &(subnet_mask.sin_addr));
+    // Call ioctl to configure network devices
+    /// put addr in ifr structure
+    memcpy(&(ifr.ifr_addr), &inet_addr, sizeof(struct sockaddr));
+    int ioctl_result = ioctl(fd, SIOCSIFADDR, &ifr);  // Set IP address
+    if (ioctl_result < 0) {
+        app->log("Error in ioctl set address: ", adapter->ifName, " : ", strerror(errno));
+    }
+    /// put mask in ifr structure
+    memcpy(&(ifr.ifr_addr), &subnet_mask, sizeof(struct sockaddr));
+    ioctl_result = ioctl(fd, SIOCSIFNETMASK, &ifr);   // Set subnet mask
+    if (ioctl_result < 0) {
+        app->log("Error in ioctl set netmask: ", adapter->ifName, " : ", strerror(errno));
+    }
+    // Add a delay to let changes propagate through system
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto *channelPtr = crl::multisense::Channel::Create(address, adapterName);
+    {
+        std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+        if (channelPtr != nullptr) {
+            app->log("Found camera on: ", address.c_str());
+            crl::multisense::system::DeviceInfo info;
+            channelPtr->getDeviceInfo(info);
+            adapter->cameraNameList.emplace_back(info.name);
+            crl::multisense::Channel::Destroy(channelPtr);
+            adapter->cameraIPAddresses.emplace_back(address);
+            {
+                std::scoped_lock<std::mutex> lock2(app->m_logQueueMutex);
+                app->out["Result"].emplace_back(adapter->sendAdapterResult());
+            }
+        } else {
+            app->log("No camera on ", address);
+        }
+        adapter->searchedIPs.emplace_back(address);
+        adapter->checkingForCamera = false;
+    }
+     */
+}
+
+void AutoConnectWindows::cleanUp() {
+    m_IsRunning = false;
+    m_ListenOnAdapter = false;
+    m_ScanAdapters = false;
+}
+
+
+/*
 void
 AutoConnectWindows::findEthernetAdapters(void *ctx, bool logEvent, bool skipIgnored,
                                          std::vector<AutoConnect::Result> *res) {
@@ -70,7 +440,7 @@ AutoConnectWindows::findEthernetAdapters(void *ctx, bool logEvent, bool skipIgno
         pcap_if_t *d;
         char errbuf[PCAP_ERRBUF_SIZE];
 
-        /* Retrieve the device list */
+        /* Retrieve the device list
         if (pcap_findalldevs(&alldevs, errbuf) == -1) {
             std::cout << "Error in pcap_findalldevs: " << errbuf << std::endl;
             return;
@@ -126,7 +496,7 @@ AutoConnectWindows::findEthernetAdapters(void *ctx, bool logEvent, bool skipIgno
                 adapter.supports = (pAdapterInfo->Type == MIB_IF_TYPE_ETHERNET);
                 adapter.description = pAdapterInfo->Description;
 
-                /*CONCATENATE two strings safely windows workaround*/
+                /*CONCATENATE two strings safely windows workaround
                 int lenA = strlen(prefix.c_str());
                 int lenB = strlen(pAdapterInfo->AdapterName);
                 char *con = (char *) malloc(lenA + lenB + 1);
@@ -172,7 +542,7 @@ AutoConnect::FoundCameraOnIp AutoConnectWindows::onFoundIp(std::string address, 
     std::string str = "Setting host address to: " + hostAddress;
     m_EventCallback(str, m_Context, 0);
 
-    /* STATIC CONFIGURATION */
+    /* STATIC CONFIGURATION
     WinRegEditor regEditorStatic(adapter.networkAdapter, adapter.description, adapter.index);
     if (regEditorStatic.ready) {
         //str = "Configuring NetAdapter...";
@@ -318,9 +688,9 @@ void AutoConnectWindows::run(void *ctx) {
         }
 
         Result adapter{};
-        
+
         adapter = adapters[i];
-        
+
 
         if (!adapter.supports) {
             continue;
@@ -358,7 +728,7 @@ void AutoConnectWindows::run(void *ctx) {
             app->shutdownT1Ready = true;
             return;
         }
-        /* Open the adapter */
+        /* Open the adapter
         if ((adhandle = pcap_open_live(adapter.networkAdapterLongName.c_str(),    // name of the device
                                        65536,            // portion of the packet to capture.
                 // 65536 grants that the whole packet will be captured on all the MACs.
@@ -373,7 +743,7 @@ void AutoConnectWindows::run(void *ctx) {
                   "'\nMake sure WinPcap is installed \nCheck the adapter connection and try again \n";
             app->m_EventCallback(str, app->m_Context, 2);
             app->m_IgnoreAdapters.push_back(adapter);
-            /* Free the device list */
+            /* Free the device list
             continue;
         }
 
@@ -416,7 +786,7 @@ void AutoConnectWindows::run(void *ctx) {
             // Retry if no packet was received
             if (res == 0)
                 continue;
-            /* convert the timestamp to readable format */
+            /* convert the timestamp to readable format
             local_tv_sec = header->ts.tv_sec;
             ltime = localtime(&local_tv_sec);
             strftime(timestr, sizeof timestr, "%H:%M:%S", ltime);
@@ -428,7 +798,7 @@ void AutoConnectWindows::run(void *ctx) {
                 return;
             }
 
-            /* retireve the position of the ip header */
+            /* retireve the position of the ip header
             auto *ih = (iphdr *) (pkt_data + 14); //length of ethernet header
 
             char ips[255];
@@ -501,3 +871,4 @@ void AutoConnectWindows::setEventCallback(void (*param)(const std::string &str, 
 void AutoConnectWindows::clearSearchedAdapters() {
     m_IgnoreAdapters.clear();
 }
+ */

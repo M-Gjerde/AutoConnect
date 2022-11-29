@@ -20,13 +20,15 @@
 
 // Once an adapter is detected it should spawn a thread that will listen on that adapter
 //
-
 #ifdef WIN32
-
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include "Windows.h"
+#include "getopt.h"
+#include "AutoConnect/AutoConnectWindows.h"
 #else
-
 #include "AutoConnect/AutoConnectLinux.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -36,8 +38,22 @@
 #include <semaphore.h>
 #include <string.h>
 #include <csignal>
+#endif
 
 volatile bool stopProgram = false;
+
+#ifdef WIN32
+BOOL WINAPI signalHandler(DWORD dwCtrlType) {
+    std::cerr << "Shutting down on signal: CTRL-C" << std::endl;
+    stopProgram = true;
+    return TRUE;
+}
+#else
+void signalHandler(int sig) {
+    std::cerr << "Shutting down on signal: " << strsignal(sig) << std::endl;
+    stopProgram = true;
+}
+#endif
 
 void usage(const char *programNameP) {
     std::cerr << "USAGE: " << programNameP << " [<options>]" << std::endl;
@@ -49,27 +65,9 @@ void usage(const char *programNameP) {
     exit(1);
 }
 
-#ifdef WIN32
-BOOL WINAPI signalHandler(DWORD dwCtrlType)
-{
-    CRL_UNUSED (dwCtrlType);
-    std::cerr << "Shutting down on signal: CTRL-C" << std::endl;
-    doneG = true;
-    return TRUE;
-}
-#else
-
-void signalHandler(int sig) {
-    std::cerr << "Shutting down on signal: " << strsignal(sig) << std::endl;
-    stopProgram = true;
-}
-
-#endif
-
-
 int main(int argc, char **argv) {
 #if WIN32
-    SetConsoleCtrlHandler (signalHandler, TRUE);
+    SetConsoleCtrlHandler(signalHandler, TRUE);
 #else
     if (getuid() != 0) {
         std::cerr << "ERROR: This program must be run with root privileges" << std::endl;
@@ -99,7 +97,11 @@ int main(int argc, char **argv) {
                 break;
         }
 
+#ifdef WIN32
+    AutoConnectWindows  autoConnect(runWithIpc, logToConsole);
+#else
     AutoConnectLinux autoConnect(runWithIpc, logToConsole);
+#endif
     while (autoConnect.pollEvents() && !stopProgram) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -108,5 +110,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
-#endif

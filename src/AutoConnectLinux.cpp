@@ -16,9 +16,9 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <sys/stat.h>
+#include <MultiSense/MultiSenseChannel.hh>
 
 #include "AutoConnect/AutoConnectLinux.h"
-#include "MultiSense/details/channel.hh"
 
 #define ByteSize 65536
 #define BackingFile "/mem"

@@ -5,87 +5,130 @@
 #ifndef AUTOCONNECT_AUTOCONNECTWINDOWS_H
 #define AUTOCONNECT_AUTOCONNECTWINDOWS_H
 
+#include "AutoConnect/ThreadPool.h"
+#define NUM_WORKER_THREADS 5
+#include <AutoConnect/json.hpp>
 
-#include <mutex>
-#include "AutoConnect.h"
-
-class AutoConnectWindows : AutoConnect {
-
+class AutoConnectWindows {
 
 public:
 
-    ~AutoConnectWindows() {
-        m_LoopAdapters = false;
-        m_ListenOnAdapter = false;
-        m_ShouldProgramRun = false;
-        m_RunAdapterSearch = false;
+    struct Adapter {
+        Adapter() = default;
+        explicit Adapter(const char *name, uint32_t index) : ifName(name),
+                                                             ifIndex(index) { // By default, we want to initialize an adapter result with a name and an index
+        }
 
-        if (m_TAutoConnect != nullptr) {
-            m_TAutoConnect->join();
-            delete m_TAutoConnect;
-            m_TAutoConnect = nullptr;
+        bool supports = true;
+        bool available = true;
+        bool checkingForCamera = false;
+        std::vector<std::string> IPAddresses;
+        std::vector<std::string> searchedIPs;
+        std::string description;
+        std::string ifName;
+        uint32_t ifIndex = 0;
+        std::vector<std::string> cameraIPAddresses;
+        std::vector<std::string> cameraNameList;
+
+        bool isSearched(const std::string &ip) {
+            for (const auto &searched: searchedIPs) {
+                if (searched == ip)
+                    return true;
+            }
+            return false;
         }
-        if (m_TAdapterSearch != nullptr) {
-            m_TAdapterSearch->join();
-            delete m_TAdapterSearch;
-            shutdownT2Ready = false;
-            m_TAdapterSearch = nullptr;
+
+        nlohmann::json sendAdapterResult() {
+            nlohmann::json j;
+            j["Name"] = ifName;
+            j["Index"] = ifIndex;
+            j["Description"] = description;
+            j["AddressList"] = cameraIPAddresses;
+            j["CameraNameList"] = cameraNameList;
+
+            return j;
         }
+    };
+
+    ~AutoConnectWindows() = default;
+
+    explicit AutoConnectWindows(bool enableIPC, bool logToConsole = false) {
+        out = {
+                {"Name", "AutoConnect"},
+                {"Log",  {""}}
+        };
+
+        if (logToConsole)
+            m_LogToConsole = true;
+
+        m_Pool = std::make_unique<AutoConnect::ThreadPool>(NUM_WORKER_THREADS);
+        m_IsRunning = true;
+        log("Started AutoConnect service");
+
+        m_Pool->Push(AutoConnectWindows::adapterScan, this);
+        m_Pool->Push(AutoConnectWindows::runInternal, this, enableIPC);
+
     }
 
-    /** @Brief Starts the search for camera given a list containing network adapters Search is done in another thread**/
-    void start() override;
+    [[nodiscard]] bool pollEvents() const {
 
-    /** @Brief Function to search for network adapters **/
-    static void findEthernetAdapters(void *ctx, bool logEvent, bool skipIgnored,
-                                     std::vector<AutoConnect::Result> *res);
+        return m_IsRunning;
+    }
 
-    /** @Brief cleans up thread**/
-    void stopAutoConnect() override;
+    bool m_LogToConsole = false;
 
-    /** @Brief Function called after a search of adapters and at least one adapter was found **/
-    void onFoundAdapters(std::vector<Result> vector, bool logEvent) override;
+    /**
+     * Pushes string to message queue. Mutex protected.
+     * Adds a newline character to each message
+     * @param msg message to push onto queue
+     */
+    template<typename ...Args>
+    void log(Args &&...args) {
+        std::ostringstream stream;
+        (stream << ... << std::forward<Args>(args)) << '\n';
 
-    /** @Brief Function called when a new IP is found. Return false if you want to keep searching or true to stop further IP searching **/
-    AutoConnect::FoundCameraOnIp onFoundIp(std::string address, Result adapter, int camera_fd) override;
+        std::scoped_lock<std::mutex> lock(m_logQueueMutex);
+        if (out.contains("Log"))
+            out["Log"].emplace_back(stream.str());
 
-    /** @Brief Function called when a camera has been found by a successfully connection by LibMultiSense **/
-    void onFoundCamera() override;
+        if (m_LogToConsole)
+            std::cout << stream.str();
+    }
 
-    AutoConnect::Result getResult();
+    void notifyStop() {
+        std::scoped_lock<std::mutex> lock(m_logQueueMutex);
 
-    crl::multisense::Channel *getCameraChannel();
+        out["Command"] = "Stop";
+        if (m_LogToConsole)
+            std::cout << "notifyStop: " << "Stop" << std::endl;
+    }
 
-    void setDetectedCallback(void (*param)(Result result1, void *ctx), void *context);
+    static void adapterScan(void *ctx);
 
-    void setEventCallback(void (*param)(const std::string &result1, void *ctx, int));
+    static void listenOnAdapter(void *ctx, Adapter *adapter);
 
-    void (*m_Callback)(AutoConnect::Result, void *) = nullptr;
+    static void checkForCamera(void *ctx, Adapter *adapter);
 
-    void (*m_EventCallback)(const std::string &, void *, int) = nullptr;
-
-
-    void *m_Context = nullptr;
-
-    bool isRunning() override;
-
-    void setShouldProgramRun(bool close) override;
-
-    std::mutex readSupportedAdaptersMutex;
-    std::vector<AutoConnect::Result> supportedAdapters;
-
-    bool shutdownT1Ready = false;
-    bool shutdownT2Ready = false;
-    bool m_RunAdapterSearch = true;
-
-    void clearSearchedAdapters();
-
-    void startAdapterSearch();
+    void cleanUp();
 
 private:
-    static void run(void *instance);
+    nlohmann::json out;
 
+    std::unique_ptr<AutoConnect::ThreadPool> m_Pool;
+    std::vector<Adapter> m_Adapters;
+    std::mutex m_AdaptersMutex;
+    std::mutex m_logQueueMutex;
+    bool m_IsRunning = false;
+    bool m_ListenOnAdapter = true;
+    bool m_ScanAdapters = true;
 
+    static void runInternal(void *ctx, bool enableIPC);
+
+    void reportAndExit(const char *msg);
+
+    //void sendMessage(caddr_t memPtr, sem_t *semPtr);
+
+    //void getMessage(caddr_t memPtr, sem_t *semPtr);
 };
 
 
