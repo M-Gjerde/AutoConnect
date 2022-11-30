@@ -1,17 +1,18 @@
 #pragma once
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-
+#endif
 #include <windows.h>
-#include <WinReg.h>
+#include <winreg.h>
 #include <iostream>
-#include <assert.h>
+#include <cassert>
 #include <vector>
 #include <fstream>
 #include <iphlpapi.h>
+#include <shellapi.h>
 
 #pragma comment(lib,"Advapi32.lib")
-
-#include "../../external/simpleini/SimpleIni.h"
+#include "../external/simpleini/SimpleIni.h"
 
 // Needed parameters for this winreg to configure static IP address:
 // 1. Interface UUID name to: Disable DHCP, Set IP address and subnet mask	: To modify the correct adapter

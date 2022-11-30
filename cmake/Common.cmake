@@ -36,11 +36,22 @@ endif ()
 # Include Submodules into project.
 # Check if exists or display fatal error
 set(LIBMULTISENSE_DIR external/LibMultiSense)
-
-
 if (NOT EXISTS "${PROJECT_SOURCE_DIR}/${LIBMULTISENSE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "The submodules ${LIBMULTISENSE_DIR} not downloaded! GIT_SUBMODULE was turned off or failed. Please update submodules and try again.")
 else ()
     include_directories(${LIBMULTISENSE_DIR}/source/LibMultiSense)
     add_subdirectory(${LIBMULTISENSE_DIR}/source/LibMultiSense)
+endif ()
+
+
+set(SIMPLEINI_DIR external/simpleini)
+if (NOT EXISTS "${PROJECT_SOURCE_DIR}/${SIMPLEINI_DIR}/SimpleIni.h")
+    message(FATAL_ERROR "The submodules ${SIMPLEINI_DIR} not downloaded! GIT_SUBMODULE was turned off or failed. Please update submodules and try again.")
+else ()
+    message("[INFO] Adding SIMPLEINI from directory: ${SIMPLEINI_DIR}")
+
+    set(SimpleIni_SRC ${SIMPLEINI_DIR}/SimpleIni.h ${SIMPLEINI_DIR}/ConvertUTF.c ${SIMPLEINI_DIR}/ConvertUTF.h)
+    set_source_files_properties(${SIMPLEINI_DIR}/ConvertUTF.c PROPERTIES LANGUAGE CXX)
+    add_library(SimpleIni STATIC ${SimpleIni_SRC})
+    set_target_properties(SimpleIni PROPERTIES LINKER_LANGUAGE CXX)
 endif ()

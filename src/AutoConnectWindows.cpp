@@ -14,6 +14,8 @@
 #include <iphlpapi.h>
 #include <AclAPI.h>
 
+#include "AutoConnect/WinRegEditor.h"
+
 struct iphdr {
     unsigned char ip_verlen;            // 4-bit IPv4 version, 4-bit header length (in 32-bit words)
     unsigned char ip_tos;                 // IP type of service
@@ -92,8 +94,7 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
 
         // Create a new ACL that contains the new ACEs.
         DWORD dwRes = SetEntriesInAcl(1, ea, NULL, &pACL);
-        if (ERROR_SUCCESS != dwRes)
-        {
+        if (ERROR_SUCCESS != dwRes) {
             _tprintf(_T("SetEntriesInAcl Error %u\n"), GetLastError());
         }
 
@@ -174,7 +175,7 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
         app->getMessage(pBuf);
         auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - time);
-        if (time_span.count() > 1000) {
+        if (time_span.count() > 30) {
             app->log("Time limit of 30s reached. Quitting..");
             break;
         }
@@ -297,44 +298,37 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     // Submit request for a socket descriptor to look up interface.
     app->log("Configuring adapter: ", adapter->ifName);
 
-    /*
-    int sd = 0;
-    if ((sd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) < 0) {
-        app->log("socket() Failed to get socket descriptor for using ioctl() ", adapter->ifName, " : ",
-                 strerror(errno));
-    }
 
-    struct sockaddr_ll addr{};
-    // Bind socket to interface
-    memset(&addr, 0x00, sizeof(addr));
-    addr.sll_family = AF_PACKET;
-    addr.sll_protocol = htons(ETH_P_ALL);
-    addr.sll_ifindex = (int) adapter->ifIndex;
-    if (bind(sd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-        app->log("Error in bind: ", adapter->ifName, " : ", strerror(errno));
-    }
-    // set the network card in promiscuos mode//
-    // An ioctl() request has encoded in it whether the argument is an in parameter or out parameter
-    // SIOCGIFFLAGS	0x8913		// get flags			//
-    // SIOCSIFFLAGS	0x8914		// set flags			//
-    struct ifreq ethreq{};
-    strncpy(ethreq.ifr_name, adapter->ifName.c_str(), IF_NAMESIZE);
-    if (ioctl(sd, SIOCGIFFLAGS, &ethreq) == -1) {
-        app->log("Error in ioctl get flags: ", adapter->ifName, " : ", strerror(errno));
-    }
-    ethreq.ifr_flags |= IFF_PROMISC;
+    pcap_if_t *alldevs{};
+    pcap_t *adhandle{};
+    int res = 0;
+    char errbuf[PCAP_ERRBUF_SIZE];
+    struct tm *ltime{};
+    char timestr[16];
+    struct pcap_pkthdr *header{};
+    const u_char *pkt_data{};
+    time_t local_tv_sec{};
+    bool adapterOpened = true;
 
-    if (ioctl(sd, SIOCSIFFLAGS, &ethreq) == -1) {
-        app->log("Error in ioctl set flags: ", adapter->ifName, " : ", strerror(errno));
-    }
+    // Open the adapter
+    if ((adhandle = pcap_open_live(adapter->ifName.c_str(),    // name of the device
+                                   65536,            // portion of the packet to capture.
+            // 65536 grants that the whole packet will be captured on all the MACs.
+                                   1,                // promiscuous mode (nonzero means promiscuous)
+                                   1000,            // read timeout
+                                   errbuf            // error buffer
+    )) == NULL) {
+        fprintf(stderr, "\nUnable to open the adapter. \n %s is not supported by WinPcap\n",
+                adapter->ifName.c_str());
+        app->log("WinPcap was unable to open the adapter: \n'" + adapter->description +
+                 "'\nMake sure WinPcap is installed \nCheck the adapter connection and try again \n");
 
-    int saddr_size, data_size;
-    struct sockaddr saddr{};
-    auto *buffer = (unsigned char *) malloc(IP_MAXPACKET + 1);
+        adapterOpened = false;
+    }
     auto startListenTime = std::chrono::steady_clock::now();
     float timeOut = 15.0f;
     app->log("Performing MultiSense camera search on adapter: ", adapter->ifName);
-    while (app->m_ListenOnAdapter) {
+    while (app->m_ListenOnAdapter && adapterOpened) {
         // Timeout handler
         // Will timeout MAX_CONNECTION_ATTEMPTS times until retrying on new adapter
         auto timeSpan = std::chrono::duration_cast<std::chrono::duration<float>>(
@@ -342,35 +336,43 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
         if (timeSpan.count() > timeOut)         // x Seconds, then break loop
             break;
 
-        saddr_size = sizeof(saddr);
-        //Receive a packet
-        data_size = (int) recvfrom(sd, buffer, IP_MAXPACKET, MSG_DONTWAIT, &saddr,
-                                   (socklen_t *) &saddr_size);
-        if (data_size < 0) {
+        res = pcap_next_ex(adhandle, &header, &pkt_data);
+
+        // Retry if no packet was received
+        if (res == 0)
+            continue;
+
+        // convert the timestamp to readable format
+        local_tv_sec = header->ts.tv_sec;
+        ltime = localtime(&local_tv_sec);
+        strftime(timestr, sizeof timestr, "%H:%M:%S", ltime);
+        if (pkt_data == nullptr) {
             continue;
         }
 
-        //Now process the packet
-        auto *iph = (struct iphdr *) (buffer + sizeof(struct ethhdr));
-        struct in_addr ip_addr{};
-        std::string address;
-        if (iph->protocol == IPPROTO_IGMP) //Check the Protocol and do accordingly...
-        {
-            ip_addr.s_addr = iph->saddr;
-            address = inet_ntoa(ip_addr);
+        // retireve the position of the ip header
+        auto *ih = (iphdr *) (pkt_data + 14); //length of ethernet header
+
+        char ips[255];
+        sprintf(ips, "%d.%d.%d.%d", (ih->saddr >> (8 * 0)) & 0xff,
+                (ih->saddr >> (8 * 1)) & 0xff,
+                (ih->saddr >> (8 * 2)) & 0xff,
+                (ih->saddr >> (8 * 3)) & 0xff);
+
+        if (ih->protocol == 2) {
+            //Check the Protocol and do accordingly...
+            std::string address = std::string(ips);
             // If not already in vector
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
                 adapter->IPAddresses.end()) {
                 app->log("Address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
+
             }
         }
     }
-
     app->log("Finished search on: ", adapter->ifName.c_str());
-    free(buffer);
-          */
 }
 
 void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
@@ -392,49 +394,33 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
         address = adapter->IPAddresses.back();
         adapterName = adapter->ifName;
     }
-    int fd = -1;
-    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
-    }
 
-    app->log("Checking for camera on ", address, " using: ", adapterName);
     // Set the host ip address to the same subnet but with *.2 at the end.
     std::string hostAddress = address;
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
     auto ptr = hostAddress.rfind('.');
     hostAddress.replace(ptr, last_element.length(), ".2");
+    app->log("Checking for camera on ", address, " using: ", adapterName, " Own address is: ", hostAddress);
 
-    /*
-    // CALL IOCTL Operations to set the address of the adapter/socket  //
-    struct ifreq ifr{};
-    /// note: no pointer here
-    struct sockaddr_in inet_addr{}, subnet_mask{};
-    // get interface name //
-    // Prepare the struct ifreq //
-    bzero(ifr.ifr_name, IFNAMSIZ);
-    strncpy(ifr.ifr_name, adapterName.c_str(), IFNAMSIZ);
+    //WinRegEditor regEditorStatic(adapter->ifName, adapter->description, adapter->ifIndex);
+    //if (regEditorStatic.ready) {
+        //str = "Configuring NetAdapter...";
+        //m_EventCallback(str, m_Context, 0);
+        //regEditor.readAndBackupRegisty();
+        //regEditor.setTCPIPValues(hostAddress, "255.255.255.0");
+        //regEditor.setJumboPacket("9014");
+        //regEditor.restartNetAdapters();
+        // 8 Seconds to wait for adapter to restart. This will vary from machine to machine and should be re-done
+        // If possible then wait for a windows event that triggers when the adapter is ready
+        // std::this_thread::sleep_for(std::chrono::milliseconds(8000));
+        // Wait for adapter to come back online
+    //}
+    // - Non persistent configuration
+    WinRegEditor regEditor(adapter->ifIndex, hostAddress, "255.255.255.0");
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
-    /// note: prepare the two struct sockaddr_in
-    inet_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, hostAddress.c_str(), &(inet_addr.sin_addr));
-    subnet_mask.sin_family = AF_INET;
-    inet_pton(AF_INET, "255.255.255.0", &(subnet_mask.sin_addr));
-    // Call ioctl to configure network devices
-    /// put addr in ifr structure
-    memcpy(&(ifr.ifr_addr), &inet_addr, sizeof(struct sockaddr));
-    int ioctl_result = ioctl(fd, SIOCSIFADDR, &ifr);  // Set IP address
-    if (ioctl_result < 0) {
-        app->log("Error in ioctl set address: ", adapter->ifName, " : ", strerror(errno));
-    }
-    /// put mask in ifr structure
-    memcpy(&(ifr.ifr_addr), &subnet_mask, sizeof(struct sockaddr));
-    ioctl_result = ioctl(fd, SIOCSIFNETMASK, &ifr);   // Set subnet mask
-    if (ioctl_result < 0) {
-        app->log("Error in ioctl set netmask: ", adapter->ifName, " : ", strerror(errno));
-    }
-    // Add a delay to let changes propagate through system
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    auto *channelPtr = crl::multisense::Channel::Create(address, adapterName);
+    // Attempt to connect to camera and post some info
+    auto* channelPtr = crl::multisense::Channel::Create(address);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
         if (channelPtr != nullptr) {
@@ -454,7 +440,6 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
         adapter->searchedIPs.emplace_back(address);
         adapter->checkingForCamera = false;
     }
-     */
 }
 
 void AutoConnectWindows::cleanUp() {

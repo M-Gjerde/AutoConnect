@@ -8,6 +8,7 @@ option(BUILD_STANDALONE "build this executable without viewer. Manual link to Li
 
 if (BUILD_STANDALONE)
     message("Building standalone version")
+    set(BUILD_SHARED_LIBS ON)
     include(cmake/Common.cmake)
 else()
     message("Building integrated version")
@@ -27,10 +28,10 @@ if (WIN32)
     add_subdirectory("getopt")
 
     add_library(LibAutoConnect STATIC src/AutoConnectWindows.cpp)
-    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi)
+    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi SimpleIni)
 
     add_executable(AutoConnect src/main.cpp)
-    target_link_libraries(AutoConnect LibAutoConnect getopt)
+    target_link_libraries(AutoConnect LibAutoConnect getopt SimpleIni)
 
     add_executable(WinReader src/WinReader.cpp)
     target_link_libraries(WinReader user32)
@@ -39,6 +40,7 @@ if (WIN32)
     set(THIRD_PARTY_DLLS
             ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
             ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
+            ${CMAKE_CURRENT_BINARY_DIR}/external/LibMultiSense/source/LibMultiSense/MultiSense.dll
             )
     # do the copying
     foreach (file_i ${THIRD_PARTY_DLLS})
