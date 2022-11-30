@@ -41,12 +41,12 @@ if (WIN32)
         set(THIRD_PARTY_DLLS
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
+                ${CMAKE_CURRENT_BINARY_DIR}/external/LibMultiSense/source/LibMultiSense/MultiSense.dll
                 )
     else ()
         set(THIRD_PARTY_DLLS
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
-                ${CMAKE_CURRENT_BINARY_DIR}/external/LibMultiSense/source/LibMultiSense/MultiSense.dll
                 )
     endif ()
     # do the copying
