@@ -37,11 +37,18 @@ if (WIN32)
     target_link_libraries(WinReader user32)
 
     # create a list of files to copy
-    set(THIRD_PARTY_DLLS
-            ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
-            ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
-            ${CMAKE_CURRENT_BINARY_DIR}/external/LibMultiSense/source/LibMultiSense/MultiSense.dll
-            )
+    if (BUILD_STANDALONE)
+        set(THIRD_PARTY_DLLS
+                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
+                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
+                )
+    else ()
+        set(THIRD_PARTY_DLLS
+                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
+                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/packet.dll
+                ${CMAKE_CURRENT_BINARY_DIR}/external/LibMultiSense/source/LibMultiSense/MultiSense.dll
+                )
+    endif ()
     # do the copying
     foreach (file_i ${THIRD_PARTY_DLLS})
         add_custom_command(
