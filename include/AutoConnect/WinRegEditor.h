@@ -12,7 +12,6 @@
 #include <shellapi.h>
 
 #pragma comment(lib,"Advapi32.lib")
-#include "../external/simpleini/SimpleIni.h"
 
 // Needed parameters for this winreg to configure static IP address:
 // 1. Interface UUID name to: Disable DHCP, Set IP address and subnet mask	: To modify the correct adapter
@@ -136,8 +135,6 @@ public:
     }
 
     int revertSettings() {
-        if (!parseBackupIni())
-            return -1;
 
         DWORD ret = -1;
         ret = RegSetValueExA(tcpIpKey, "EnableDHCP", 0, REG_DWORD, (const BYTE*)&backup.EnableDHCP, sizeof(DWORD));
@@ -160,67 +157,6 @@ public:
             std::cout << "Failed to reset SubnetMask\n";
             return 1;
         }
-    }
-
-    void readAndBackupRegisty() {
-        std::vector<void*> data(255);
-        DWORD size = 255;
-        DWORD ret;
-        u_long dwType;
-
-        ret = RegGetValueA(tcpIpKey, NULL, "IPAddress", RRF_RT_REG_MULTI_SZ, &dwType, data.data(), &size);
-        if (ret != ERROR_SUCCESS) {
-            std::cout << "Error, Reading IPAddress" << std::endl;
-        }
-        backup.IPAddress.reserve(size);
-        memcpy(backup.IPAddress.data(), data.data(), size);
-        size = 255;
-
-        ret = RegGetValueA(tcpIpKey, NULL, "SubnetMask", RRF_RT_REG_MULTI_SZ, &dwType, data.data(), &size);
-        if (ret != ERROR_SUCCESS) {
-            std::cout << "Error, Reading SubnetMask" << std::endl;
-        }
-        backup.SubnetMask.reserve(size);
-        memcpy(backup.SubnetMask.data(), data.data(), size);
-        size = 255;
-        ret = RegGetValueA(tcpIpKey, NULL, "EnableDHCP", RRF_RT_REG_DWORD, &dwType, data.data(), &size);
-        if (ret != ERROR_SUCCESS) {
-            std::cout << "Error, Reading EnableDHCP" << std::endl;
-        }
-        memcpy(&backup.EnableDHCP, data.data(), size);
-        size = 255;
-        ret = RegGetValueA(adapterKey, NULL, "*JumboPacket", RRF_RT_REG_SZ, &dwType, data.data(), &size);
-        if (ret != ERROR_SUCCESS) {
-            std::cout << "Error, Reading JumboPacket" << std::endl;
-        }
-        backup.JumboPacket.reserve(size);
-        memcpy(backup.JumboPacket.data(), data.data(), size);
-
-        // Write to ini file.
-        CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile("winreg.ini");
-        if (rc < 0) {
-            // File doesn't exist error, then create one
-            if (rc == SI_FILE && errno == ENOENT) {
-                std::ofstream output = std::ofstream("winreg.ini");
-                rc = ini.LoadFile("winreg.ini");
-            }
-        }
-        if (!ini.SectionExists(name.c_str())) {
-            ret = ini.SetValue(name.c_str(), "Description", adapterDesc.c_str());
-            ret = ini.SetValue(name.c_str(), "Index", std::to_string(index).c_str());
-            ret = ini.SetValue(name.c_str(), "Key", name.c_str());
-
-            ret = ini.SetValue(name.c_str(), "IPAddress", backup.IPAddress.c_str());
-            ret = ini.SetValue(name.c_str(), "SubnetMask", backup.SubnetMask.c_str());
-            ret = ini.SetValue(name.c_str(), "EnableDHCP", std::to_string(backup.EnableDHCP).c_str());
-            ret = ini.SetValue(name.c_str(), "*JumboPacket", backup.JumboPacket.c_str());
-            rc = ini.SaveFile("winreg.ini");
-        }
-        if (rc < 0) {
-        }
-
     }
 
     int setTCPIPValues(std::string ip, std::string subnetMask) {
@@ -261,29 +197,7 @@ public:
     }
 
     int resetJumbo() {
-        if (!parseBackupIni())
-            return -1;
-
         return setJumboPacket(backup.JumboPacket);
-    }
-
-    bool parseBackupIni() {
-        CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile("winreg.ini");
-        if (rc < 0) {
-            std::cerr << "Backup register file does not exist" << std::endl;
-            return false;
-        }
-        if (!ini.SectionExists(name.c_str())) {
-            std::cerr << "Backup for adapqter does not exists " << name.c_str() << std::endl;
-            return false;
-        }
-        backup.IPAddress = ini.GetValue(name.c_str(), "IPAddress", "");
-        backup.SubnetMask = ini.GetValue(name.c_str(), "SubnetMask", "");
-        backup.EnableDHCP = std::stoi(ini.GetValue(name.c_str(), "EnableDHCP", "1"));
-        backup.JumboPacket = ini.GetValue(name.c_str(), "*JumboPacket", "");
-        return true;
     }
 
 private:

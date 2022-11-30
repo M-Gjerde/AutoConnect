@@ -28,10 +28,10 @@ if (WIN32)
     add_subdirectory("getopt")
 
     add_library(LibAutoConnect STATIC src/AutoConnectWindows.cpp)
-    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi SimpleIni)
+    target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi)
 
     add_executable(AutoConnect src/main.cpp)
-    target_link_libraries(AutoConnect LibAutoConnect getopt SimpleIni)
+    target_link_libraries(AutoConnect LibAutoConnect getopt)
 
     add_executable(WinReader src/WinReader.cpp)
     target_link_libraries(WinReader user32)
