@@ -5,41 +5,14 @@
 
 #include "AutoConnect/AutoConnectWindows.h"
 
-#ifndef _WINDOWS_
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#undef WIN32_LEAN_AND_MEAN
-#endif
-
-#include <winsock2.h>
-#include <iostream>
-#define BUF_SIZE 256
-TCHAR szName[]=TEXT("Global\\MyFileMappingObject");
-TCHAR szMsg[]=TEXT("Message from first process.");
-#include <stdio.h>
-#include <conio.h>
-#include <tchar.h>
-
-#pragma comment(lib, "ws2_32.lib")
-
-//
-// Created by magnus on 7/14/22.
-//
-
 #include <cstring>
 #include <mutex>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <MultiSense/MultiSenseChannel.hh>
-
-#include "AutoConnect/AutoConnectWindows.h"
 #include <WinPcap/pcap.h>
 #include <iphlpapi.h>
-
-#define ByteSize 65536
-#define BackingFile "/mem"
-#define AccessPerms 0777
-#define SemaphoreName "sem"
+#include <AclAPI.h>
 
 struct iphdr {
     unsigned char ip_verlen;            // 4-bit IPv4 version, 4-bit header length (in 32-bit words)
@@ -60,23 +33,17 @@ void AutoConnectWindows::reportAndExit(const char *msg) {
     m_IsRunning = false;
 }
 
-/*
-void AutoConnectWindows::sendMessage(caddr_t memPtr, sem_t *semPtr) {
+
+void AutoConnectWindows::sendMessage(LPCTSTR pBuf) {
     std::scoped_lock<std::mutex> lock(m_logQueueMutex);
-    if (semPtr == (void *) -1)
-        reportAndExit("sem_open");
-    strcpy(memPtr, to_string(out).c_str());
-    if (sem_post(semPtr) < 0)
-        reportAndExit("sem_post");
+    strcpy((char *) pBuf, to_string(out).c_str());
+    //CopyMemory((PVOID) pBuf, szMsg, (_tcslen(szMsg) * sizeof(TCHAR)));
 }
 
-void AutoConnectWindows::getMessage(caddr_t memPtr, sem_t *semPtr) {
-    if (semPtr == (void *) -1)
-        reportAndExit("sem_open");
-    std::string str(memPtr + (ByteSize / 2));
-    memset(memPtr + (ByteSize / 2), 0x00, ByteSize / 2);
-    if (sem_post(semPtr) < 0)
-        reportAndExit("sem_post");
+
+void AutoConnectWindows::getMessage(LPCTSTR pBuf) {
+    std::string str(pBuf + (SharedBufferSize / 2));
+    memset((char *) pBuf + (SharedBufferSize / 2), 0x00, SharedBufferSize / 2);
 
     if (!str.empty()) {
         auto json = nlohmann::json::parse(str);
@@ -84,83 +51,102 @@ void AutoConnectWindows::getMessage(caddr_t memPtr, sem_t *semPtr) {
         if (json.contains("Command")) {
             if (json["Command"] == "Stop") {
                 log("Stopping auto connect");
-                sendMessage(memPtr, semPtr);
+                sendMessage(pBuf);
                 cleanUp();
             }
         }
     }
 }
- */
+
 
 void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     auto time = std::chrono::steady_clock::now();
     HANDLE hMapFile;
     LPCTSTR pBuf;
+    TCHAR szName[] = TEXT("Global\\MyFileMappingObject");
 
-    hMapFile = CreateFileMapping(
-            INVALID_HANDLE_VALUE,    // use paging file
-            NULL,                    // default security
-            PAGE_READWRITE,          // read/write access
-            0,                       // maximum object size (high-order DWORD)
-            BUF_SIZE,                // maximum object size (low-order DWORD)
-            szName);                 // name of mapping object
-
-    if (hMapFile == NULL)
-    {
-        _tprintf(TEXT("Could not create file mapping object (%lu).\n"),
-                 GetLastError());
-        return;
-    }
-    pBuf = (LPTSTR) MapViewOfFile(hMapFile,   // handle to map object
-                                  FILE_MAP_ALL_ACCESS, // read/write permission
-                                  0,
-                                  0,
-                                  BUF_SIZE);
-
-    if (pBuf == NULL)
-    {
-        _tprintf(TEXT("Could not map view of file (%lu).\n"),
-                 GetLastError());
-
-        CloseHandle(hMapFile);
-
-        return;
-    }
-
-
-
-
-
-    if (enableIPC)
-        ;
-    /*
-    int fd = -1;
-    caddr_t memPtr;
-    sem_t *semPtr;
-    mode_t old_umask = umask(0);
     if (enableIPC) {
-        fd = shm_open(BackingFile,      // name from smem.h
-                      O_RDWR | O_CREAT, // read/write, create if needed
-                      AccessPerms);     // access permissions
-        if (fd < 0) app->reportAndExit("Can't open shared mem segment...");
-        ftruncate(fd, ByteSize); // get the bytes
-        memPtr = static_cast<caddr_t>(mmap(NULL,       // let system pick where to put segment
-                                           ByteSize,   // how many bytes
-                                           PROT_READ | PROT_WRITE, // access protections
-                                           MAP_SHARED, // mapping visible to other processes
-                                           fd,         // file descriptor
-                                           0));         // offset: start at 1st byte
+        EXPLICIT_ACCESS ea[1];
+        PSID pEveryoneSID = NULL;
+        PACL pACL = NULL;
 
-        if ((caddr_t) -1 == memPtr) app->reportAndExit("Can't get segment...");
-        semPtr = sem_open(SemaphoreName, // name
-                          O_CREAT,       // create the semaphore
-                          AccessPerms,   // protection perms
-                          0);            // initial value
+        SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
+        // Create a well-known SID for the Everyone group.
+        if (!AllocateAndInitializeSid(&SIDAuthWorld, 1,
+                                      SECURITY_WORLD_RID,
+                                      0, 0, 0, 0, 0, 0, 0,
+                                      &pEveryoneSID)) {
+            _tprintf(_T("AllocateAndInitializeSid Error %u\n"), GetLastError());
+        }
 
+        // Initialize an EXPLICIT_ACCESS structure for an ACE.
+        // The ACE will allow Everyone read access to the key.
+        ZeroMemory(&ea, sizeof(EXPLICIT_ACCESS));
+        ea[0].grfAccessPermissions = KEY_ALL_ACCESS;
+        ea[0].grfAccessMode = SET_ACCESS;
+        ea[0].grfInheritance = NO_INHERITANCE;
+        ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        ea[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+        ea[0].Trustee.ptstrName = (LPTSTR) pEveryoneSID;
+
+        // Create a new ACL that contains the new ACEs.
+        DWORD dwRes = SetEntriesInAcl(1, ea, NULL, &pACL);
+        if (ERROR_SUCCESS != dwRes)
+        {
+            _tprintf(_T("SetEntriesInAcl Error %u\n"), GetLastError());
+        }
+
+        PSECURITY_DESCRIPTOR pSD = NULL;
+        pSD = (PSECURITY_DESCRIPTOR) LocalAlloc(LPTR,
+                                                SECURITY_DESCRIPTOR_MIN_LENGTH);
+        if (!InitializeSecurityDescriptor(pSD,
+                                          SECURITY_DESCRIPTOR_REVISION)) {
+            _tprintf(_T("InitializeSecurityDescriptor Error %u\n"),
+                     GetLastError());
+        }
+
+        // Add the ACL to the security descriptor.
+        if (!SetSecurityDescriptorDacl(pSD,
+                                       TRUE,     // bDaclPresent flag
+                                       pACL,
+                                       FALSE))   // not a default DACL
+        {
+            _tprintf(_T("SetSecurityDescriptorDacl Error %u\n"),
+                     GetLastError());
+        }
+
+        SECURITY_ATTRIBUTES mapAttributes{};
+        mapAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+        mapAttributes.bInheritHandle = true;
+        mapAttributes.lpSecurityDescriptor = pSD;
+
+        hMapFile = CreateFileMapping(
+                INVALID_HANDLE_VALUE,    // use paging file
+                &mapAttributes,                    // default security
+                PAGE_READWRITE,          // read/write access
+                0,                       // maximum object size (high-order DWORD)
+                SharedBufferSize,                // maximum object size (low-order DWORD)
+                szName);                 // name of mapping object
+
+        if (hMapFile == NULL) {
+            _tprintf(TEXT("Could not create file mapping object (%lu).\n"),
+                     GetLastError());
+            return;
+        }
+        pBuf = (LPTSTR) MapViewOfFile(hMapFile,   // handle to map object
+                                      FILE_MAP_ALL_ACCESS, // read/write permission
+                                      0,
+                                      0,
+                                      SharedBufferSize);
+
+        if (pBuf == NULL) {
+            _tprintf(TEXT("Could not map view of file (%lu).\n"), GetLastError());
+            CloseHandle(hMapFile);
+            return;
+        }
     }
 
-     */
     while (app->m_IsRunning) {
         // Find a list of available adapters
         {
@@ -182,12 +168,10 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
                 }
             }
         }
-        app->log("Copied memory");
-        CopyMemory((PVOID)pBuf, szMsg, (_tcslen(szMsg) * sizeof(TCHAR)));
 
-        //app->sendMessage(memPtr, semPtr);
+        app->sendMessage(pBuf);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        //app->getMessage(memPtr, semPtr);
+        app->getMessage(pBuf);
         auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - time);
         if (time_span.count() > 1000) {
@@ -197,29 +181,19 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
     }
     app->log("Exiting autoconnect");
     app->notifyStop();
-/*
-    app->sendMessage(memPtr, semPtr);
+    app->sendMessage(pBuf);
     if (enableIPC) {
-        // clean up
-        munmap(memPtr, ByteSize);// unmap the storage
-        close(fd);
-        sem_close(semPtr);
-        umask(old_umask);
-        shm_unlink(BackingFile);// unlink from the backing file
+        UnmapViewOfFile(pBuf);
+        CloseHandle(hMapFile);
     }
     app->m_IsRunning = false;
-    */
-
-    UnmapViewOfFile(pBuf);
-    CloseHandle(hMapFile);
 }
 
 void AutoConnectWindows::adapterScan(void *ctx) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
-    std::vector<Adapter> tempList;
 
     while (app->m_ScanAdapters) {
-        tempList.clear();
+        std::vector<Adapter> adapters;
         pcap_if_t *alldevs;
         pcap_if_t *d;
         char errbuf[PCAP_ERRBUF_SIZE];
@@ -289,15 +263,30 @@ void AutoConnectWindows::adapterScan(void *ctx) {
                 adapter.ifName = con;
                 //adapter.networkAdapter = pAdapterInfo->AdapterName;
                 adapter.ifIndex = pAdapterInfo->Index;
-                tempList.push_back(adapter);
+                adapters.push_back(adapter);
                 free(con);
-
-                app->log("Found Adapter: ", adapter.description, " Supports: ", adapter.supports, " ID: ", adapter.ifName);
-
                 pAdapterInfo = pAdapterInfo->Next;
             } while (pAdapterInfo);
         }
         free(AdapterInfo);
+        // Put into shared list
+        // If the name is new then insert it in the list
+        {
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            for (const auto &adapter: adapters) {
+                bool exist = false;
+                for (const auto &shared: app->m_Adapters) {
+                    if (shared.ifName == adapter.ifName)
+                        exist = true;
+                }
+                if (!exist) {
+                    app->m_Adapters.emplace_back(adapter);
+                    app->log("Found adapter: ", adapter.ifName, " index: ", adapter.ifIndex, " supports: ",
+                             adapter.supports);
+
+                }
+            }
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }

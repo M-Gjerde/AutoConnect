@@ -8,6 +8,22 @@
 #include "AutoConnect/ThreadPool.h"
 #define NUM_WORKER_THREADS 5
 #include <AutoConnect/json.hpp>
+#ifndef _WINDOWS_
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <iostream>
+
+#define SharedBufferSize 65536
+
+#include <cstdio>
+#include <conio.h>
+#include <tchar.h>
+
+#pragma comment(lib, "ws2_32.lib")
+
 
 class AutoConnectWindows {
 
@@ -97,7 +113,6 @@ public:
 
     void notifyStop() {
         std::scoped_lock<std::mutex> lock(m_logQueueMutex);
-
         out["Command"] = "Stop";
         if (m_LogToConsole)
             std::cout << "notifyStop: " << "Stop" << std::endl;
@@ -126,9 +141,9 @@ private:
 
     void reportAndExit(const char *msg);
 
-    //void sendMessage(caddr_t memPtr, sem_t *semPtr);
+    void sendMessage(LPCTSTR pBuf);
 
-    //void getMessage(caddr_t memPtr, sem_t *semPtr);
+    void getMessage(LPCTSTR pBuf);
 };
 
 
