@@ -2,8 +2,17 @@ cmake_minimum_required(VERSION 3.2)
 project(AutoConnect LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
-include_directories("include")
+# Use cases:
+# 1. Clone this as a standalone project
+# Uses cmake-git to fetch  LibMultiSense as submodule
 
+# 2. This is a submodule part of another project
+# Enable cmake policy 0877
+# Set BUILD_STANDALONE to OFF
+# add this subdirectory
+# Use however
+
+include_directories("include")
 option(BUILD_STANDALONE "build this executable without viewer. Manual link to LibMultiSense" ON)
 
 if (BUILD_STANDALONE)
