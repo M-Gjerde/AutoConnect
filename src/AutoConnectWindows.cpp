@@ -282,7 +282,7 @@ void AutoConnectWindows::adapterScan(void *ctx) {
                 }
                 if (!exist) {
                     app->m_Adapters.emplace_back(adapter);
-                    app->log("Found adapter: ", adapter.ifName, " index: ", adapter.ifIndex, " supports: ",
+                    app->log("Found adapter: ", adapter.description, " index: ", adapter.ifIndex, " supports: ",
                              adapter.supports);
 
                 }
@@ -296,7 +296,7 @@ void AutoConnectWindows::adapterScan(void *ctx) {
 void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     // Submit request for a socket descriptor to look up interface.
-    app->log("Configuring adapter: ", adapter->ifName);
+    app->log("Configuring adapter: ", adapter->description);
 
 
     pcap_if_t *alldevs{};
@@ -327,7 +327,7 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     }
     auto startListenTime = std::chrono::steady_clock::now();
     float timeOut = 15.0f;
-    app->log("Performing MultiSense camera search on adapter: ", adapter->ifName);
+    app->log("Performing MultiSense camera search on adapter: ", adapter->description);
     while (app->m_ListenOnAdapter && adapterOpened) {
         // Timeout handler
         // Will timeout MAX_CONNECTION_ATTEMPTS times until retrying on new adapter
@@ -366,18 +366,19 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
                 adapter->IPAddresses.end()) {
-                app->log("Address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
+                app->log("Address ", address.c_str(), " On adapter: ", adapter->description.c_str());
                 adapter->IPAddresses.emplace_back(address);
 
             }
         }
     }
-    app->log("Finished search on: ", adapter->ifName.c_str());
+    app->log("Finished search on: ", adapter->description.c_str());
 }
 
 void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     std::string address;
     std::string adapterName;
+    std::string description;
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
@@ -393,6 +394,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
         }
         address = adapter->IPAddresses.back();
         adapterName = adapter->ifName;
+        description = adapter->description;
     }
 
     // Set the host ip address to the same subnet but with *.2 at the end.
@@ -400,7 +402,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
     auto ptr = hostAddress.rfind('.');
     hostAddress.replace(ptr, last_element.length(), ".2");
-    app->log("Checking for camera on ", address, " using: ", adapterName, " Own address is: ", hostAddress);
+    app->log("Checking for camera on ", address, " using: ", description, " Own address is: ", hostAddress);
 
     //WinRegEditor regEditorStatic(adapter->ifName, adapter->description, adapter->ifIndex);
     //if (regEditorStatic.ready) {
