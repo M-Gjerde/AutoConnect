@@ -79,10 +79,10 @@ endif ()
 if(UNIX)
     ## Linux
     add_library(LibAutoConnect STATIC src/AutoConnectLinux.cpp)
-    target_link_libraries(LibAutoConnect -lpthread -ltbb MultiSense)
+    target_link_libraries(LibAutoConnect -lpthread -ltbb MultiSense -lrt)
 
     add_executable(AutoConnect src/main.cpp)
-    target_link_libraries(AutoConnect LibAutoConnect -lrt)
+    target_link_libraries(AutoConnect LibAutoConnect)
 
     add_executable(reader src/reader.cpp)
     target_link_libraries(reader -lpthread -lrt)
