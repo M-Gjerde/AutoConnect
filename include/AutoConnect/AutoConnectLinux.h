@@ -11,6 +11,7 @@
 #include <cstdarg>
 #include <sstream>
 #include <AutoConnect/json.hpp>
+#include <semaphore.h>
 
 #include "AutoConnect/ThreadPool.h"
 

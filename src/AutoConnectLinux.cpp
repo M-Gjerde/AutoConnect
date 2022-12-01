@@ -14,7 +14,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <semaphore.h>
+
 #include <sys/stat.h>
 #include <MultiSense/MultiSenseChannel.hh>
 
