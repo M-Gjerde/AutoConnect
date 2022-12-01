@@ -116,7 +116,7 @@ void AutoConnectLinux::runInternal(void *ctx, bool enableIPC) {
         auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - time);
         if (time_span.count() > 30) {
-            app->log("Time limit of 30s reached. Quitting..");
+            app->log("Time limit of 30s reached. Exiting AutoConnect.");
             break;
         }
     }
@@ -350,6 +350,7 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
             app->log("Success. Found a MultiSense device at: ", address.c_str());
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
+            crl::multisense::Channel::Destroy(channelPtr);
 
             // Set MTU
             strncpy(ifr.ifr_name, adapter->ifName.c_str(), sizeof(ifr.ifr_name));//interface m_Name where you want to set the MTU
@@ -358,18 +359,15 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
                 app->log("Failed to set MTU to 7200 on: ", adapter->ifName);
             } else {
                 app->log("Set MTU to 7200 on: ", adapter->ifName);
-
             }
-
             adapter->cameraNameList.emplace_back(info.name);
-            crl::multisense::Channel::Destroy(channelPtr);
             adapter->cameraIPAddresses.emplace_back(address);
             {
                 std::scoped_lock<std::mutex> lock2(app->m_logQueueMutex);
                 app->out["Result"].emplace_back(adapter->sendAdapterResult());
             }
         } else {
-            app->log("No camera on ", address);
+            app->log("No camera at ", address);
         }
         adapter->searchedIPs.emplace_back(address);
         adapter->checkingForCamera = false;
