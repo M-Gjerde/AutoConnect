@@ -276,6 +276,7 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
                 adapter->IPAddresses.end()) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
+                app->log("Checking for camera at ", address);
             }
         }
     }
@@ -307,7 +308,6 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
         app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
     }
 
-    app->log("Checking for camera at ", address, " on: ", adapterName);
     // Set the host ip address to the same subnet but with *.2 at the end.
     std::string hostAddress = address;
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
