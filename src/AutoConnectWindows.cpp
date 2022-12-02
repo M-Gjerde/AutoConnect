@@ -379,6 +379,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     std::string address;
     std::string adapterName;
     std::string description;
+    uint32_t ifIndex;
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
@@ -395,6 +396,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
         address = adapter->IPAddresses.back();
         adapterName = adapter->ifName;
         description = adapter->description;
+        ifIndex = adapter->ifIndex;
     }
 
     // Set the host ip address to the same subnet but with *.2 at the end.
@@ -421,13 +423,12 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     // Attempt to connect to camera and post some info
     auto *channelPtr = crl::multisense::Channel::Create(address);
     {
-        std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
         if (channelPtr != nullptr) {
             app->log("Found camera on: ", address.c_str());
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
-            WinRegEditor regEditorStatic(adapter->ifName, adapter->description, adapter->ifIndex);
+            WinRegEditor regEditorStatic(adapterName,description, ifIndex);
             app->log("Setting MTU size to 9014: ", address.c_str());
             if (regEditorStatic.ready) {
                 regEditorStatic.setJumboPacket("9014");
@@ -437,6 +438,8 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             } else {
                 app->log("Failed to set MTU size, cannot guarantee image streams will be received");
             }
+
+            std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             adapter->cameraNameList.emplace_back(info.name);
             adapter->cameraIPAddresses.emplace_back(address);
             {
