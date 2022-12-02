@@ -433,7 +433,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             if (regEditorStatic.ready) {
                 regEditorStatic.setJumboPacket("9014");
                 regEditorStatic.restartNetAdapters();
-                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+                std::this_thread::sleep_for(std::chrono::milliseconds(8000));
                 app->log("Configured! Ready to connect to: ", info.name);
             } else {
                 app->log("Failed to set MTU size, cannot guarantee image streams will be received");
