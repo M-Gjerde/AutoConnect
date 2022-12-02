@@ -404,33 +404,40 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     hostAddress.replace(ptr, last_element.length(), ".2");
     app->log("Checking for camera on ", address, " using: ", description, " Own address is: ", hostAddress);
 
-    //WinRegEditor regEditorStatic(adapter->ifName, adapter->description, adapter->ifIndex);
-    //if (regEditorStatic.ready) {
-        //str = "Configuring NetAdapter...";
-        //m_EventCallback(str, m_Context, 0);
-        //regEditor.readAndBackupRegisty();
-        //regEditor.setTCPIPValues(hostAddress, "255.255.255.0");
-        //regEditor.setJumboPacket("9014");
-        //regEditor.restartNetAdapters();
-        // 8 Seconds to wait for adapter to restart. This will vary from machine to machine and should be re-done
-        // If possible then wait for a windows event that triggers when the adapter is ready
-        // std::this_thread::sleep_for(std::chrono::milliseconds(8000));
-        // Wait for adapter to come back online
-    //}
+
+    //str = "Configuring NetAdapter...";
+    //m_EventCallback(str, m_Context, 0);
+    //regEditor.readAndBackupRegisty();
+    //regEditor.setTCPIPValues(hostAddress, "255.255.255.0");
+    // 8 Seconds to wait for adapter to restart. This will vary from machine to machine and should be re-done
+    // If possible then wait for a windows event that triggers when the adapter is ready
+    // std::this_thread::sleep_for(std::chrono::milliseconds(8000));
+    // Wait for adapter to come back online
+
     // - Non persistent configuration
     WinRegEditor regEditor(adapter->ifIndex, hostAddress, "255.255.255.0");
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
     // Attempt to connect to camera and post some info
-    auto* channelPtr = crl::multisense::Channel::Create(address);
+    auto *channelPtr = crl::multisense::Channel::Create(address);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
         if (channelPtr != nullptr) {
             app->log("Found camera on: ", address.c_str());
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
-            adapter->cameraNameList.emplace_back(info.name);
             crl::multisense::Channel::Destroy(channelPtr);
+            WinRegEditor regEditorStatic(adapter->ifName, adapter->description, adapter->ifIndex);
+            app->log("Setting MTU size to 9014: ", address.c_str());
+            if (regEditorStatic.ready) {
+                regEditorStatic.setJumboPacket("9014");
+                regEditorStatic.restartNetAdapters();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+                app->log("Configured! Ready to connect to: ", info.name);
+            } else {
+                app->log("Failed to set MTU size, cannot guarantee image streams will be received");
+            }
+            adapter->cameraNameList.emplace_back(info.name);
             adapter->cameraIPAddresses.emplace_back(address);
             {
                 std::scoped_lock<std::mutex> lock2(app->m_logQueueMutex);
