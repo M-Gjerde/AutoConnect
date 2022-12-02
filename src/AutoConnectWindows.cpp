@@ -404,7 +404,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
     auto ptr = hostAddress.rfind('.');
     hostAddress.replace(ptr, last_element.length(), ".2");
-    app->log("Checking for camera at ", address, " ob: ", description, " Own address is: ", hostAddress);
+    app->log("Checking if", address, " is a MultiSense device. Adapter: ", description);
 
 
     //str = "Configuring NetAdapter...";
@@ -429,7 +429,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
             WinRegEditor regEditorStatic(adapterName,description, ifIndex);
-            app->log("Setting MTU size to 9014: ", address.c_str());
+            app->log("Setting MTU size to 9014: ");
             if (regEditorStatic.ready) {
                 regEditorStatic.setJumboPacket("9014");
                 regEditorStatic.restartNetAdapters();
