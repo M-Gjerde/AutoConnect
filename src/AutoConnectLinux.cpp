@@ -276,11 +276,10 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
                 adapter->IPAddresses.end()) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
-                app->log("Checking for camera at ", address, " on: ", adapter->ifName);
+                app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
             }
         }
     }
-    app->log("Finished ip scan on: ", adapter->ifName.c_str());
     free(buffer);
 }
 
