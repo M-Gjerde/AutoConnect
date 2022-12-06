@@ -276,7 +276,7 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
                 adapter->IPAddresses.end()) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
-                app->log("Checking for camera at ", address);
+                app->log("Checking for camera at ", address, " on: ", adapter->ifName);
             }
         }
     }
@@ -347,7 +347,7 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
         if (channelPtr != nullptr) {
-            app->log("Success. Found a MultiSense device at: ", address.c_str());
+            app->log("Success. Found a MultiSense device at: ", address.c_str(), " on: ", adapterName.c_str());
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
