@@ -14,7 +14,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <semaphore.h>
+
 #include <sys/stat.h>
 #include <MultiSense/MultiSenseChannel.hh>
 
@@ -276,10 +276,10 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
                 adapter->IPAddresses.end()) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
+                app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
             }
         }
     }
-    app->log("Finished ip scan on: ", adapter->ifName.c_str());
     free(buffer);
 }
 
@@ -307,7 +307,6 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
         app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
     }
 
-    app->log("Checking for camera at ", address, " on: ", adapterName);
     // Set the host ip address to the same subnet but with *.2 at the end.
     std::string hostAddress = address;
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
@@ -347,7 +346,7 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
         if (channelPtr != nullptr) {
-            app->log("Success. Found a MultiSense device at: ", address.c_str());
+            app->log("Success. Found a MultiSense device at: ", address.c_str(), " on: ", adapterName.c_str());
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
