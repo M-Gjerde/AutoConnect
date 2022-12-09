@@ -427,12 +427,15 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
             WinRegEditor regEditorStatic(adapterName,description, ifIndex);
-            app->log("Setting MTU size to 9014: ");
+            app->log("Setting MTU size to 9014 on: ", description);
             if (regEditorStatic.ready) {
                 regEditorStatic.setJumboPacket("9014");
                 regEditorStatic.restartNetAdapters();
-                std::this_thread::sleep_for(std::chrono::milliseconds(8000));
+                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
                 app->log("Configured! Ready to connect to: ", info.name);
+                WinRegEditor setIpAddress(ifIndex, hostAddress, "255.255.255.0");
+                std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+
             } else {
                 app->log("Failed to set MTU size, cannot guarantee image streams will be received");
             }
