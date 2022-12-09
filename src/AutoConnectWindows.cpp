@@ -168,21 +168,23 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
                 }
             }
         }
-
-        app->sendMessage(pBuf);
+        if (enableIPC)
+            app->sendMessage(pBuf);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        app->getMessage(pBuf);
+        if (enableIPC)
+            app->getMessage(pBuf);
         auto time_span = std::chrono::duration_cast<std::chrono::duration<float>>(
                 std::chrono::steady_clock::now() - time);
-        if (time_span.count() > 30) {
-            app->log("Time limit of 30s reached. Exiting AutoConnect.");
+        if (time_span.count() > 60) {
+            app->log("Time limit of 60s reached. Exiting AutoConnect.");
             break;
         }
     }
     app->log("Exiting autoconnect");
-    app->notifyStop();
-    app->sendMessage(pBuf);
+
     if (enableIPC) {
+        app->notifyStop();
+        app->sendMessage(pBuf);
         UnmapViewOfFile(pBuf);
         CloseHandle(hMapFile);
     }
