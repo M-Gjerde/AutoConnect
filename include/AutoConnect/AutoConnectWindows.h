@@ -108,7 +108,7 @@ public:
             out["Log"].emplace_back(stream.str());
 
         if (m_LogToConsole)
-            std::cout << stream.str();
+            std::cout << stream.str() << std::flush;
     }
 
     void notifyStop() {

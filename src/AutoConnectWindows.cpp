@@ -321,7 +321,7 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
         fprintf(stderr, "\nUnable to open the adapter. \n %s is not supported by WinPcap\n",
                 adapter->ifName.c_str());
         app->log("WinPcap was unable to open the adapter: \n'" + adapter->description +
-                 "'\nMake sure WinPcap is installed \nCheck the adapter connection and try again \n");
+                 "'\nMake sure WinPcap is installed \nCheck the adapter connection and try again");
 
         adapterOpened = false;
     }
@@ -372,7 +372,6 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
             }
         }
     }
-    app->log("Finished ip scan on: ", adapter->description.c_str());
 }
 
 void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
@@ -404,7 +403,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
     auto ptr = hostAddress.rfind('.');
     hostAddress.replace(ptr, last_element.length(), ".2");
-    app->log("Checking if", address, " is a MultiSense device. Adapter: ", description);
+    app->log("Checking if there is a MultiSense device at: ", address, " Adapter: ", description);
 
 
     //str = "Configuring NetAdapter...";
@@ -418,7 +417,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
 
     // - Non persistent configuration
     WinRegEditor regEditor(adapter->ifIndex, hostAddress, "255.255.255.0");
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
     // Attempt to connect to camera and post some info
     auto *channelPtr = crl::multisense::Channel::Create(address);
@@ -447,7 +446,7 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
                 app->out["Result"].emplace_back(adapter->sendAdapterResult());
             }
         } else {
-            app->log("No camera at ", address);
+            app->log("Could not connect to camera at ", address);
         }
         adapter->searchedIPs.emplace_back(address);
         adapter->checkingForCamera = false;
