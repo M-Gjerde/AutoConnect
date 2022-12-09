@@ -108,7 +108,10 @@ void AutoConnectLinux::runInternal(void *ctx, bool enableIPC) {
                       O_RDWR | O_CREAT, /* read/write, create if needed */
                       AccessPerms);     /* access permissions */
         if (fd < 0) app->reportAndExit("Can't open shared mem segment...");
-        ftruncate(fd, ByteSize); /* get the bytes */
+        int res = ftruncate(fd, ByteSize); /* get the bytes */
+        if (res != 0){
+            app->reportAndExit("Failed to get the bytes...");
+        }
         memPtr = static_cast<caddr_t>(mmap(NULL,       /* let system pick where to put segment */
                                            ByteSize,   /* how many bytes */
                                            PROT_READ | PROT_WRITE, /* access protections */
