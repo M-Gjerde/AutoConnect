@@ -308,8 +308,6 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     struct pcap_pkthdr *header{};
     const u_char *pkt_data{};
     time_t local_tv_sec{};
-    bool adapterOpened = true;
-
     // Open the adapter
     if ((adhandle = pcap_open_live(adapter->ifName.c_str(),    // name of the device
                                    65536,            // portion of the packet to capture.
@@ -322,13 +320,12 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
                 adapter->ifName.c_str());
         app->log("WinPcap was unable to open the adapter: \n'" + adapter->description +
                  "'\nMake sure WinPcap is installed \nCheck the adapter connection and try again");
-
-        adapterOpened = false;
+        return;
     }
     auto startListenTime = std::chrono::steady_clock::now();
     float timeOut = 15.0f;
     app->log("Performing MultiSense camera search on adapter: ", adapter->description);
-    while (app->m_ListenOnAdapter && adapterOpened) {
+    while (app->m_ListenOnAdapter) {
         // Timeout handler
         // Will timeout MAX_CONNECTION_ATTEMPTS times until retrying on new adapter
         auto timeSpan = std::chrono::duration_cast<std::chrono::duration<float>>(
@@ -366,7 +363,7 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
                 adapter->IPAddresses.end()) {
-                app->log("Address ", address.c_str(), " On adapter: ", adapter->description.c_str());
+                app->log("Found address ", address.c_str(), " On adapter: ", adapter->description.c_str());
                 adapter->IPAddresses.emplace_back(address);
 
             }

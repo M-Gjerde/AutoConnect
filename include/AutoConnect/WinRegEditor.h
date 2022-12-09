@@ -261,7 +261,6 @@ private:
                                        NULL);
                 if (retCode == ERROR_SUCCESS)
                 {
-                    printf(TEXT("(%d) %s\n"), i + 1, achKey);
                     // For each subkey
                     HKEY subHKey{};
 
@@ -285,7 +284,6 @@ private:
                                 printf("Failed to retrieve the adapter key\n");
                             }
                             RegCloseKey(queryKey);
-                            printf("Got the adapter key\n");
                             return hKey;
 
                         }
