@@ -16,14 +16,16 @@ $ mkdir build && cd build
 $ cmake ..
 $ cmake --build . --config Release
 ```
-// Must be run as root. So in a Linux Terminal
+Must be run as root. So in a Linux Terminal
 ```sh
 $ sudo ./AutoConnect -c on -i off # -c on for logging to console. -i off for not opening shared memory descriptor
 ```
-Windows open command prompt as admin:
+Windows users should open command prompt as admin and run:
 ```sh
 $ .\AutoConnect.exe -c on -i off # -c on for logging to console. -i off for not opening shared memory descriptor
 ```
+
+The autoconnect tool will run for 60 seconds before shutting down.
 
 ### Windows Instructions
 Open a Developer command prompt:
