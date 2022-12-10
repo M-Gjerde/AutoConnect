@@ -16,6 +16,9 @@ $ mkdir build && cd build
 $ cmake ..
 $ cmake --build . --config Release
 ```
+Executables will be located in ${Build}/bin folder.
+
+
 Must be run as root. So in a Linux Terminal
 ```sh
 $ sudo ./AutoConnect -c on -i off # -c on for logging to console. -i off for not opening shared memory descriptor

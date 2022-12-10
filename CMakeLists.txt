@@ -45,17 +45,20 @@ if (WIN32)
     add_executable(WinReader src/WinIPCReader.cpp)
     target_link_libraries(WinReader user32)
 
-    set_target_properties(MultiSense PROPERTIES RUNTIME_OUTPUT_DIRECTORY  ${CMAKE_BINARY_DIR})
-    set_target_properties(MultiSense PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE  ${CMAKE_BINARY_DIR})
+    set_target_properties(MultiSense PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin
+            )
+
+    set_target_properties(AutoConnect PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin
+            )
 
     # create a list of files to copy
     if (BUILD_STANDALONE)
-        set(THIRD_PARTY_DLLS
-                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
-                ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/Packet.dll
-                ${CMAKE_CURRENT_BINARY_DIR}/MultiSense.dll
-                )
-    else ()
         set(THIRD_PARTY_DLLS
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/wpcap.dll
                 ${CMAKE_CURRENT_SOURCE_DIR}/WinPcap/Packet.dll
@@ -67,7 +70,7 @@ if (WIN32)
                 TARGET AutoConnect
                 POST_BUILD
                 COMMAND ${CMAKE_COMMAND}
-                ARGS -E copy ${file_i} ${CMAKE_CURRENT_BINARY_DIR}
+                ARGS -E copy ${file_i} ${CMAKE_BINARY_DIR}/bin
         )
     endforeach (file_i)
 
