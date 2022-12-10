@@ -39,10 +39,10 @@ if (WIN32)
     add_library(LibAutoConnect STATIC src/AutoConnectWindows.cpp)
     target_link_libraries(LibAutoConnect MultiSense winpcap_lib packet_lib iphlpapi)
 
-    add_executable(AutoConnect src/main.cpp)
+    add_executable(AutoConnect src/Main.cpp)
     target_link_libraries(AutoConnect LibAutoConnect getopt)
 
-    add_executable(WinReader src/WinReader.cpp)
+    add_executable(WinReader src/WinIPCReader.cpp)
     target_link_libraries(WinReader user32)
 
     set_target_properties(MultiSense PROPERTIES RUNTIME_OUTPUT_DIRECTORY  ${CMAKE_BINARY_DIR})
@@ -84,10 +84,10 @@ if(UNIX)
     add_library(LibAutoConnect STATIC src/AutoConnectLinux.cpp)
     target_link_libraries(LibAutoConnect -lpthread -ltbb MultiSense -lrt)
 
-    add_executable(AutoConnect src/main.cpp)
+    add_executable(AutoConnect src/Main.cpp)
     target_link_libraries(AutoConnect LibAutoConnect)
 
-    add_executable(reader src/reader.cpp)
+    add_executable(reader src/LinuxIPCReader.cpp)
     target_link_libraries(reader -lpthread -lrt)
 
 endif ()

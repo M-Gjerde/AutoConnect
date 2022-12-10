@@ -1,9 +1,3 @@
-//
-// Created by magnus on 11/28/22.
-//
-
-#ifndef MULTISENSE_VIEWER_AUTOCONNECT_JSON_HPP
-#define MULTISENSE_VIEWER_AUTOCONNECT_JSON_HPP
 //     __ _____ _____ _____
 //  __|  |   __|     |   | |  JSON for Modern C++
 // |  |  |__   |  |  | | | |  version 3.11.2
@@ -24644,4 +24638,3 @@ using nlohmann::literals::json_literals::operator "" _json_pointer; //NOLINT(mis
 
 
 #endif  // INCLUDE_NLOHMANN_JSON_HPP_
-#endif //MULTISENSE_VIEWER_JSON_HPP
