@@ -30,9 +30,6 @@ $ .\AutoConnect.exe -c on -i off # -c on for logging to console. -i off for not 
 
 The autoconnect tool will run for 60 seconds before shutting down.
 
-### Windows Instructions
-Open a Developer command prompt:
-
 ### For use in another program
 Check ReadSharedMemory.h in MultiSense-Viewer source code. Contains sample for both Windows and Ubuntu.
 
