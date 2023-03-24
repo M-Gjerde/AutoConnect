@@ -65,7 +65,7 @@ class WinRegEditor {
 
 public:
     HKEY tcpIpKey;
-    HKEY adapterKey;
+    std::vector<HKEY> adapterKeys;
     uint32_t index;
     bool ready = false;
     std::string name;
@@ -113,8 +113,8 @@ public:
         this->adapterDesc = adapterDescription;
 
         DWORD lResult = RegOpenKeyEx(HKEY_LOCAL_MACHINE, ("SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\" + lpKey).c_str(), 0, KEY_READ | KEY_SET_VALUE, &tcpIpKey);
-        adapterKey = findAdapterKey(adapterDescription);
-        if (adapterKey == nullptr) {
+        adapterKeys = findAdapterKey(adapterDescription);
+        if (adapterKeys.empty()) {
             std::cout << "Failed to retrieve adapter key\n";
         }
         else {
@@ -167,6 +167,9 @@ public:
     void restartNetAdapters() {
         std::string strIdx = std::to_string(index);
         auto shl = ShellExecuteA(0, 0, "powershell.exe", std::string("Get-NetAdapter -InterfaceIndex " + strIdx + " | Restart-NetAdapter").c_str(), "", SW_HIDE);
+        if ((int)shl <= 32){
+            std::cout << "Failed to restart adapter after jumbo packet configuration" << std::endl;
+        }
     }
 
     int revertSettings() {
@@ -220,14 +223,16 @@ public:
     }
 
     int setJumboPacket(std::string value) {
-        // Set *JumboPacket
-        DWORD ret = RegSetValueExA(adapterKey, "*JumboPacket", 0, REG_SZ, (const BYTE*)value.c_str(), value.size());
-        if (ret != ERROR_SUCCESS) {
-            std::cout << "Failed to Set *JumboPacket\n";
-            return -1;
-        }
-        else {
-            std::cout << "Set *JumboPacket on device: " << "Lenovo USB Ethernet" << std::endl;
+        // Set *JumboPacket on keys matching description to our netadapter
+        for (const auto& key : adapterKeys){
+            DWORD ret = RegSetValueExA(key, "*JumboPacket", 0, REG_SZ, (const BYTE*)value.c_str(), value.size());
+            if (ret != ERROR_SUCCESS) {
+                std::cout << "Failed to Set *JumboPacket\n";
+                return -1;
+            }
+            else {
+                std::cout << "Set *JumboPacket on device: " << "Lenovo USB Ethernet" << std::endl;
+            }
         }
     }
 
@@ -236,7 +241,7 @@ public:
     }
 
 private:
-    HKEY findAdapterKey(std::string driverDesc) {
+    std::vector<HKEY> findAdapterKey(std::string driverDesc) {
         HKEY queryKey;
         DWORD lResult2 = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}", 0, KEY_READ, &queryKey);
         // Open the GUID class 4d36e972-e325-11ce-bfc1-08002be10318
@@ -279,7 +284,7 @@ private:
                 NULL);       // last write time
         TCHAR    achKey[MAX_KEY_LENGTH];   // buffer for subkey name
 
-
+        std::vector<std::string> matchingDescriptions;
 
 
         if (cSubKeys)
@@ -309,25 +314,29 @@ private:
                     }
                     else {
                         std::string description((const char*)data.data());
-                        if (description == driverDesc) {
-                            HKEY hKey;
+                        if (description == driverDesc)
+                            matchingDescriptions.emplace_back(achKey);
 
-                            // Open new Key here
-                            std::string adapterlpKey = "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}\\" + std::string(achKey);
-                            DWORD lResult = RegOpenKeyEx(HKEY_LOCAL_MACHINE, adapterlpKey.c_str(), 0, KEY_READ | KEY_SET_VALUE, &hKey);
-                            if (lResult != ERROR_SUCCESS) {
-                                printf("Failed to retrieve the adapter key\n");
-                            }
-                            RegCloseKey(queryKey);
-                            return hKey;
-
-                        }
                     }
                 }
             }
         }
+
+        std::vector<HKEY> keys;
+        for (const auto& keyMatch: matchingDescriptions) {
+                HKEY hKey;
+
+                // Open new Key here
+                std::string adapterlpKey = "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}\\" + std::string(keyMatch);
+                DWORD lResult = RegOpenKeyEx(HKEY_LOCAL_MACHINE, adapterlpKey.c_str(), 0, KEY_READ | KEY_SET_VALUE, &hKey);
+                if (lResult != ERROR_SUCCESS) {
+                    printf("Failed to retrieve the adapter key\n");
+                } else {
+                    keys.emplace_back(hKey);
+                }
+        }
         RegCloseKey(queryKey);
-        return nullptr;
+        return keys;
     }
 
 

@@ -413,10 +413,10 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
-        bool searchedAll = true;
+        bool searchedAll = false;
         for (const auto &item: adapter->IPAddresses) {
-            if (!adapter->isSearched(item)) {
-                searchedAll = false;
+            if (adapter->isSearched(item)) {
+                searchedAll = true;
             }
         }
         if (searchedAll) {
