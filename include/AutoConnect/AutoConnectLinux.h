@@ -95,6 +95,7 @@ public:
     explicit AutoConnectLinux(bool enableIPC, bool logToConsole = false) {
         out = {
                 {"Name", "AutoConnect"},
+                {"Version", "v1.0.0"},
                 {"Log",  {""}}
         };
 
