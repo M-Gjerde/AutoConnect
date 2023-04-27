@@ -181,6 +181,10 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
             app->reportAndExit("Can't MapViewOfFile of shared mem segment...");
             return;
         }
+
+        memset((void *) pBuf, 0, SharedBufferSize); // Set the memory pointed by pBuf to 0 for SharedBufferSize bytes
+
+
     }
 
     while (app->m_IsRunning) {
@@ -258,7 +262,7 @@ void AutoConnectWindows::adapterScan(void *ctx) {
 
             }
         } else {
-                app->log("Waiting for pcap device list");
+            app->log("Waiting for pcap device list");
             continue;
         }
 
