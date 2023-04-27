@@ -38,6 +38,8 @@
 #define AUTOCONNECT_AUTOCONNECTWINDOWS_H
 
 #include "AutoConnect/ThreadPool.h"
+#include "pcap/pcap.h"
+
 #define NUM_WORKER_THREADS 5
 #include <AutoConnect/Json.hpp>
 #ifndef _WINDOWS_
@@ -98,7 +100,10 @@ public:
         }
     };
 
-    ~AutoConnectWindows() = default;
+    ~AutoConnectWindows(){
+
+        m_Pool->Stop();
+    }
 
     explicit AutoConnectWindows(bool enableIPC, bool logToConsole = false) {
         out = {
@@ -176,6 +181,8 @@ private:
     void sendMessage(LPCTSTR pBuf);
 
     void getMessage(LPCTSTR pBuf);
+
+    bool findAllDevices(pcap_if **alldevsp, char *errbuf);
 };
 
 

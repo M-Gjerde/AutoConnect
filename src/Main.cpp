@@ -95,7 +95,7 @@ void usage(const char *programNameP) {
 }
 
 int main(int argc, char **argv) {
-#if WIN32
+#ifdef WIN32
     SetConsoleCtrlHandler(signalHandler, TRUE);
 #else
     if (getuid() != 0) {
