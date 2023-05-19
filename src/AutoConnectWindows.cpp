@@ -70,24 +70,64 @@ void AutoConnectWindows::reportAndExit(const char *msg) {
 
 void AutoConnectWindows::sendMessage(LPCTSTR pBuf) {
     std::scoped_lock<std::mutex> lock(m_logQueueMutex);
-    strcpy((char *) pBuf, to_string(out).c_str());
-    //CopyMemory((PVOID) pBuf, szMsg, (_tcslen(szMsg) * sizeof(TCHAR)));
+    strcpy_s((char *) pBuf, (SharedBufferSize / 2), nlohmann::to_string(out).c_str());
 }
 
 
 void AutoConnectWindows::getMessage(LPCTSTR pBuf) {
-    std::string str(pBuf + (SharedBufferSize / 2));
+    std::string str("0", SharedBufferSize);
+    std::memcpy(str.data(), pBuf + (SharedBufferSize / 2), SharedBufferSize / 2);
     memset((char *) pBuf + (SharedBufferSize / 2), 0x00, SharedBufferSize / 2);
 
     if (!str.empty()) {
-        auto json = nlohmann::json::parse(str);
+        try {
+            auto json = nlohmann::json::parse(str);
+            std::cout << json.dump(4) << std::endl;
+            if (json.contains("Command")) {
+                if (json["Command"] == "Stop") {
+                    log("Stopping auto connect");
+                    sendMessage(pBuf);
+                    cleanUp();
+                }
 
-        if (json.contains("Command")) {
-            if (json["Command"] == "Stop") {
-                log("Stopping auto connect");
-                sendMessage(pBuf);
-                cleanUp();
             }
+            if (json.contains("SetIP")) {
+                std::string indexStr = json["index"];
+                int index = 0;
+                try {
+                    index = std::stoi(indexStr);
+                    // Use the 'index' variable here
+                    nlohmann::json res = out["Result"];
+                    std::string adapterName = res[index]["Name"];
+                    std::string ip = res[index]["AddressList"][0];
+                    int ifIndex = res[index]["Index"];
+                    std::string description = res[index]["Description"];
+                    // Set the host ip address to the same subnet but with *.2 at the end.
+                    std::string hostAddress = ip;
+                    std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
+                    auto ptr = hostAddress.rfind('.');
+                    hostAddress.replace(ptr, last_element.length(), ".2");
+                    //log("Setting ip: " + hostAddress + " At interface: " + adapterName);
+
+                    WinRegEditor regEditorStatic(adapterName, description, ifIndex);
+                    //log("Setting MTU size to 9014 on: ", description);
+                    regEditorStatic.setJumboPacket("9014");
+                    std::cout << "Setting jumbo packet: " << std::endl;
+
+                    regEditorStatic.restartNetAdapters();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+                    WinRegEditor setIpAddress(ifIndex, hostAddress, "255.255.255.0");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+                    std::cout << "Set ip: " << hostAddress << " on adapter: " << description << std::endl;
+
+                } catch (nlohmann::json::exception &e) {
+                    // output exception information
+                    std::cout << "message: " << e.what() << '\n'
+                              << "exception id: " << e.id << '\n';
+                }
+
+            }
+        } catch (const std::exception &e) {
         }
     }
 }
@@ -162,8 +202,8 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
                 SharedBufferSize,                // maximum object size (low-order DWORD)
                 szName);                 // name of mapping object
 
-        if (hMapFile == NULL) {
-            app->reportAndExit("Can't open shared mem segment...");
+        if (hMapFile == nullptr) {
+            app->reportAndExit("Can't CreateFileMapping for shared mem segment...");
             return;
         }
         pBuf = (LPTSTR) MapViewOfFile(hMapFile,   // handle to map object
@@ -172,11 +212,15 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
                                       0,
                                       SharedBufferSize);
 
-        if (pBuf == NULL) {
+        if (pBuf == nullptr) {
             CloseHandle(hMapFile);
-            app->reportAndExit("Can't open shared mem segment...");
+            app->reportAndExit("Can't MapViewOfFile of shared mem segment...");
             return;
         }
+
+        memset((void *) pBuf, 0, SharedBufferSize); // Set the memory pointed by pBuf to 0 for SharedBufferSize bytes
+
+
     }
 
     while (app->m_IsRunning) {
@@ -223,22 +267,41 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
     app->m_IsRunning = false;
 }
 
+
+bool AutoConnectWindows::findAllDevices(pcap_if_t **alldevsp, char *errbuf) {
+    if (pcap_findalldevs(alldevsp, errbuf) == -1) {
+        std::cerr << "Error in pcap_findalldevs: " << errbuf << std::endl;
+        return false;
+    }
+    return true;
+}
+
+
 void AutoConnectWindows::adapterScan(void *ctx) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     app->log("Performing adapter scan");
+    constexpr auto timeout = std::chrono::seconds(5);
 
     while (app->m_ScanAdapters) {
         std::vector<Adapter> adapters;
         pcap_if_t *alldevs;
         pcap_if_t *d;
-        char errbuf[PCAP_ERRBUF_SIZE];
+        char errbuf[PCAP_ERRBUF_SIZE] = {0};
 
-        // Retrieve the device list
-        if (pcap_findalldevs(&alldevs, errbuf) == -1) {
-            app->log("Error in pcap_findalldevs: ", errbuf);
-            return;
+        auto findDevicesFuture = std::async(std::launch::async, &AutoConnectWindows::findAllDevices, app, &alldevs,
+                                            errbuf);
+
+        if (findDevicesFuture.wait_for(timeout) == std::future_status::ready) {
+            if (!findDevicesFuture.get()) {
+                app->log("pcap device list returned error");
+                continue;
+            } else {
+
+            }
+        } else {
+            app->log("Waiting for pcap device list");
+            continue;
         }
-
 
         // Print the list
         int i = 0;
@@ -253,6 +316,7 @@ void AutoConnectWindows::adapterScan(void *ctx) {
             if (found != std::string::npos)
                 prefix = std::string(d->name).substr(0, found);
         }
+        pcap_freealldevs(alldevs);
 
         DWORD dwBufLen = sizeof(IP_ADAPTER_INFO);
         PIP_ADAPTER_INFO AdapterInfo;
@@ -330,7 +394,6 @@ void AutoConnectWindows::adapterScan(void *ctx) {
 void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     // Submit request for a socket descriptor to look up interface.
-    app->log("Configuring adapter: ", adapter->description);
 
 
     pcap_if_t *alldevs{};
@@ -343,6 +406,7 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
     const u_char *pkt_data{};
     time_t local_tv_sec{};
     // Open the adapter
+    app->log("Opening adapter: ", adapter->description);
     if ((adhandle = pcap_open_live(adapter->ifName.c_str(),    // name of the device
                                    65536,            // portion of the packet to capture.
             // 65536 grants that the whole packet will be captured on all the MACs.
@@ -396,7 +460,10 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
             // If not already in vector
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
-                adapter->IPAddresses.end()) {
+                adapter->IPAddresses.end() &&
+                std::find(adapter->searchedIPs.begin(), adapter->searchedIPs.end(), address) ==
+                adapter->searchedIPs.end()
+                    ) {
                 app->log("Found address ", address.c_str(), " On adapter: ", adapter->description.c_str());
                 adapter->IPAddresses.emplace_back(address);
 
@@ -413,20 +480,24 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectWindows *>(ctx);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
-        bool searchedAll = true;
+        if (!app->m_IsRunning || !app->m_ListenOnAdapter || !app->m_ScanAdapters)
+            return;
+        bool searchedAll = false;
         for (const auto &item: adapter->IPAddresses) {
-            if (!adapter->isSearched(item)) {
-                searchedAll = false;
+            if (adapter->isSearched(item)) {
+                searchedAll = true;
             }
         }
         if (searchedAll) {
             adapter->checkingForCamera = false;
             return;
         }
-        address = adapter->IPAddresses.back();
-        adapterName = adapter->ifName;
         description = adapter->description;
         ifIndex = adapter->ifIndex;
+        address = adapter->IPAddresses.front();
+        adapterName = adapter->ifName;
+        adapter->IPAddresses.erase(adapter->IPAddresses.begin());
+
     }
 
     // Set the host ip address to the same subnet but with *.2 at the end.
@@ -458,19 +529,6 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
-            WinRegEditor regEditorStatic(adapterName,description, ifIndex);
-            app->log("Setting MTU size to 9014 on: ", description);
-            if (regEditorStatic.ready) {
-                regEditorStatic.setJumboPacket("9014");
-                regEditorStatic.restartNetAdapters();
-                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-                app->log("Configured! Ready to connect to: ", info.name);
-                WinRegEditor setIpAddress(ifIndex, hostAddress, "255.255.255.0");
-                std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
-            } else {
-                app->log("Failed to set MTU size, cannot guarantee image streams will be received");
-            }
 
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             adapter->cameraNameList.emplace_back(info.name);
