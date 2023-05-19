@@ -85,7 +85,7 @@ void AutoConnectWindows::getMessage(LPCTSTR pBuf) {
             std::cout << json.dump(4) << std::endl;
             if (json.contains("Command")) {
                 if (json["Command"] == "Stop") {
-                    log("Stopping auto connect");
+                    log("Stopping Auto Connect");
                     sendMessage(pBuf);
                     cleanUp();
                 }
@@ -256,7 +256,7 @@ void AutoConnectWindows::runInternal(void *ctx, bool enableIPC) {
             break;
         }
     }
-    app->log("Exiting autoconnect");
+    app->log("Exiting Auto Connect");
 
     if (enableIPC) {
         app->notifyStop();
