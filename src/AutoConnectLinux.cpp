@@ -314,11 +314,14 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
             address = inet_ntoa(ip_addr);
             // If not already in vector
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+            // Check if we havent added this ip or searched it before
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
-                adapter->IPAddresses.end()) {
+                adapter->IPAddresses.end() &&
+                    std::find(adapter->searchedIPs.begin(), adapter->searchedIPs.end(), address) ==
+                    adapter->searchedIPs.end()
+                ) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
-                app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
             }
         }
     }
@@ -341,8 +344,11 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
             adapter->checkingForCamera = false;
             return;
         }
-        address = adapter->IPAddresses.back();
+        address = adapter->IPAddresses.front();
         adapterName = adapter->ifName;
+        adapter->IPAddresses.erase(adapter->IPAddresses.begin());
+        app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
+
     }
     int fd = -1;
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {

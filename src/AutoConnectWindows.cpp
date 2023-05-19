@@ -423,7 +423,10 @@ void AutoConnectWindows::listenOnAdapter(void *ctx, Adapter *adapter) {
             // If not already in vector
             std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
-                adapter->IPAddresses.end()) {
+                adapter->IPAddresses.end() &&
+                std::find(adapter->searchedIPs.begin(), adapter->searchedIPs.end(), address) ==
+                adapter->searchedIPs.end()
+                    ) {
                 app->log("Found address ", address.c_str(), " On adapter: ", adapter->description.c_str());
                 adapter->IPAddresses.emplace_back(address);
 
@@ -450,10 +453,13 @@ void AutoConnectWindows::checkForCamera(void *ctx, Adapter *adapter) {
             adapter->checkingForCamera = false;
             return;
         }
-        address = adapter->IPAddresses.back();
-        adapterName = adapter->ifName;
         description = adapter->description;
         ifIndex = adapter->ifIndex;
+        address = adapter->IPAddresses.front();
+        adapterName = adapter->ifName;
+        adapter->IPAddresses.erase(adapter->IPAddresses.begin());
+        app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
+
     }
 
     // Set the host ip address to the same subnet but with *.2 at the end.
