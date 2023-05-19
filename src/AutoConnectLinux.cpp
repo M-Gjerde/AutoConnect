@@ -91,6 +91,20 @@ void AutoConnectLinux::getMessage(caddr_t memPtr, sem_t *semPtr) {
                 sendMessage(memPtr, semPtr);
                 cleanUp();
             }
+
+            if (json["Command"] == "SetIP") {
+                log("Setting ip");
+                std::string indexStr = json["index"];
+                int index = std::stoi(indexStr);
+                auto res = out["Result"].at(index);
+                std::string interfaceName = res[index]["Name"];
+                std::string interfaceIndex = res[index]["Index"];
+                std::string ip = res[index]["AddressList"][0];
+                std::string cameraName = res[index]["CameraNameList"][0];
+                setHostAddress(interfaceName, ip);
+                setMTU(interfaceName, 7200);
+
+            }
         }
     }
 }
@@ -328,39 +342,11 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
     free(buffer);
 }
 
-void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
-    std::string address;
-    std::string adapterName;
-    auto *app = static_cast<AutoConnectLinux *>(ctx);
-    {
-        std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
-        bool searchedAll = true;
-        for (const auto &item: adapter->IPAddresses) {
-            if (!adapter->isSearched(item)) {
-                searchedAll = false;
-            }
-        }
-        if (searchedAll) {
-            adapter->checkingForCamera = false;
-            return;
-        }
-        address = adapter->IPAddresses.front();
-        adapterName = adapter->ifName;
-        adapter->IPAddresses.erase(adapter->IPAddresses.begin());
-        app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
-
-    }
+void AutoConnectLinux::setHostAddress(const std::string& adapterName, const std::string& hostAddress){
     int fd = -1;
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        app->log("Failed to create socket: ", adapter->ifName, " : ", strerror(errno));
+        log("Failed to create socket: ", adapterName, " : ", strerror(errno));
     }
-
-    // Set the host ip address to the same subnet but with *.2 at the end.
-    std::string hostAddress = address;
-    std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
-    auto ptr = hostAddress.rfind('.');
-    hostAddress.replace(ptr, last_element.length(), ".2");
-
     // CALL IOCTL Operations to set the address of the adapter/socket  //
     struct ifreq ifr{};
     /// note: no pointer here
@@ -380,14 +366,66 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     memcpy(&(ifr.ifr_addr), &inet_addr, sizeof(struct sockaddr));
     int ioctl_result = ioctl(fd, SIOCSIFADDR, &ifr);  // Set IP address
     if (ioctl_result < 0) {
-        app->log("Error in ioctl set address: ", adapter->ifName, " : ", strerror(errno));
+        log("Error in ioctl set address: ", adapterName, " : ", strerror(errno));
     }
     /// put mask in ifr structure
     memcpy(&(ifr.ifr_addr), &subnet_mask, sizeof(struct sockaddr));
     ioctl_result = ioctl(fd, SIOCSIFNETMASK, &ifr);   // Set subnet mask
     if (ioctl_result < 0) {
-        app->log("Error in ioctl set netmask: ", adapter->ifName, " : ", strerror(errno));
+        log("Error in ioctl set netmask: ", adapterName, " : ", strerror(errno));
     }
+}
+
+void AutoConnectLinux::setMTU(const std::string& adapterName, int mtu){
+    int fd = -1;
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        log("Failed to create socket: ", adapterName, " : ", strerror(errno));
+    }
+    // CALL IOCTL Operations t
+    // o set the address of the adapter/socket  //
+    struct ifreq ifr{};
+    // Set MTU
+    strncpy(ifr.ifr_name, adapterName.c_str(),
+            sizeof(ifr.ifr_name));//interface m_Name where you want to set the MTU
+    ifr.ifr_mtu = mtu; //your MTU  here
+    if (ioctl(fd, SIOCSIFMTU, (caddr_t) &ifr) < 0) {
+        log("Failed to set MTU to 7200 on: ", adapterName);
+    } else {
+        log("Set MTU to 7200 on: ", adapterName);
+    }
+}
+
+void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
+    std::string address;
+    std::string adapterName;
+    auto *app = static_cast<AutoConnectLinux *>(ctx);
+    {
+        std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
+        if(!app->m_IsRunning || !app->m_ListenOnAdapter || !app->m_ScanAdapters)
+            return;
+
+        bool searchedAll = true;
+        for (const auto &item: adapter->IPAddresses) {
+            if (!adapter->isSearched(item)) {
+                searchedAll = false;
+            }
+        }
+        if (searchedAll) {
+            adapter->checkingForCamera = false;
+            return;
+        }
+        address = adapter->IPAddresses.front();
+        adapterName = adapter->ifName;
+        adapter->IPAddresses.erase(adapter->IPAddresses.begin());
+        app->log("Checking for camera at ", address.c_str(), " on: ", adapter->ifName.c_str());
+
+    }
+    // Set the host ip address to the same subnet but with *.2 at the end.
+    std::string hostAddress = address;
+    std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
+    auto ptr = hostAddress.rfind('.');
+    hostAddress.replace(ptr, last_element.length(), ".2");
+    app->setHostAddress(adapterName, hostAddress);
     // Add a delay to let changes propagate through system
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     auto *channelPtr = crl::multisense::Channel::Create(address, adapterName);
@@ -398,16 +436,8 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
             crl::multisense::system::DeviceInfo info;
             channelPtr->getDeviceInfo(info);
             crl::multisense::Channel::Destroy(channelPtr);
+            app->setMTU(adapterName, 7200);
 
-            // Set MTU
-            strncpy(ifr.ifr_name, adapter->ifName.c_str(),
-                    sizeof(ifr.ifr_name));//interface m_Name where you want to set the MTU
-            ifr.ifr_mtu = 7200; //your MTU  here
-            if (ioctl(fd, SIOCSIFMTU, (caddr_t) &ifr) < 0) {
-                app->log("Failed to set MTU to 7200 on: ", adapter->ifName);
-            } else {
-                app->log("Set MTU to 7200 on: ", adapter->ifName);
-            }
             adapter->cameraNameList.emplace_back(info.name);
             adapter->cameraIPAddresses.emplace_back(address);
             {
