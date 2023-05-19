@@ -84,7 +84,7 @@ void AutoConnectLinux::getMessage(caddr_t memPtr, sem_t *semPtr) {
 
     if (!str.empty()) {
         auto json = nlohmann::json::parse(str);
-
+        std::cout << json.dump(4) << std::endl;
         if (json.contains("Command")) {
             if (json["Command"] == "Stop") {
                 log("Stopping auto connect");
@@ -92,19 +92,32 @@ void AutoConnectLinux::getMessage(caddr_t memPtr, sem_t *semPtr) {
                 cleanUp();
             }
 
-            if (json["Command"] == "SetIP") {
-                log("Setting ip");
-                std::string indexStr = json["index"];
-                int index = std::stoi(indexStr);
-                auto res = out["Result"].at(index);
+        }
+        if (json.contains("SetIP")) {
+            log("Setting ip");
+            std::string indexStr = json["index"];
+            log("index str: " + indexStr);
+            int index = 0;
+            try {
+                index = std::stoi(indexStr);
+                // Use the 'index' variable here
+                nlohmann::json res = out["Result"];
                 std::string interfaceName = res[index]["Name"];
-                std::string interfaceIndex = res[index]["Index"];
                 std::string ip = res[index]["AddressList"][0];
-                std::string cameraName = res[index]["CameraNameList"][0];
-                setHostAddress(interfaceName, ip);
-                setMTU(interfaceName, 7200);
+                // Set the host ip address to the same subnet but with *.2 at the end.
+                std::string hostAddress = ip;
+                std::string last_element(hostAddress.substr(hostAddress.rfind(".")));
+                auto ptr = hostAddress.rfind('.');
+                hostAddress.replace(ptr, last_element.length(), ".2");
+                log("Setting ip: " + hostAddress + " At interface: " + interfaceName);
 
+                setHostAddress(interfaceName, hostAddress);
+                setMTU(interfaceName, 7200);
+            } catch (const std::exception &e) {
+                // Handle the exception here
+                std::cout << "An exception occurred: " << e.what() << std::endl;
             }
+
         }
     }
 }
@@ -123,7 +136,7 @@ void AutoConnectLinux::runInternal(void *ctx, bool enableIPC) {
                       AccessPerms);     /* access permissions */
         if (fd < 0) app->reportAndExit("Can't open shared mem segment...");
         int res = ftruncate(fd, ByteSize); /* get the bytes */
-        if (res != 0){
+        if (res != 0) {
             app->reportAndExit("Failed to get the bytes...");
         }
         memPtr = static_cast<caddr_t>(mmap(NULL,       /* let system pick where to put segment */
@@ -175,7 +188,7 @@ void AutoConnectLinux::runInternal(void *ctx, bool enableIPC) {
         }
     }
     app->log("Exiting autoconnect");
-    if (enableIPC){
+    if (enableIPC) {
         app->notifyStop();
         app->sendMessage(memPtr, semPtr);
     }
@@ -331,9 +344,9 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
             // Check if we havent added this ip or searched it before
             if (std::find(adapter->IPAddresses.begin(), adapter->IPAddresses.end(), address) ==
                 adapter->IPAddresses.end() &&
-                    std::find(adapter->searchedIPs.begin(), adapter->searchedIPs.end(), address) ==
-                    adapter->searchedIPs.end()
-                ) {
+                std::find(adapter->searchedIPs.begin(), adapter->searchedIPs.end(), address) ==
+                adapter->searchedIPs.end()
+                    ) {
                 app->log("Got address ", address.c_str(), " On adapter: ", adapter->ifName.c_str());
                 adapter->IPAddresses.emplace_back(address);
             }
@@ -342,7 +355,7 @@ void AutoConnectLinux::listenOnAdapter(void *ctx, Adapter *adapter) {
     free(buffer);
 }
 
-void AutoConnectLinux::setHostAddress(const std::string& adapterName, const std::string& hostAddress){
+void AutoConnectLinux::setHostAddress(const std::string &adapterName, const std::string &hostAddress) {
     int fd = -1;
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         log("Failed to create socket: ", adapterName, " : ", strerror(errno));
@@ -376,7 +389,7 @@ void AutoConnectLinux::setHostAddress(const std::string& adapterName, const std:
     }
 }
 
-void AutoConnectLinux::setMTU(const std::string& adapterName, int mtu){
+void AutoConnectLinux::setMTU(const std::string &adapterName, int mtu) {
     int fd = -1;
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         log("Failed to create socket: ", adapterName, " : ", strerror(errno));
@@ -401,7 +414,7 @@ void AutoConnectLinux::checkForCamera(void *ctx, Adapter *adapter) {
     auto *app = static_cast<AutoConnectLinux *>(ctx);
     {
         std::scoped_lock<std::mutex> lock(app->m_AdaptersMutex);
-        if(!app->m_IsRunning || !app->m_ListenOnAdapter || !app->m_ScanAdapters)
+        if (!app->m_IsRunning || !app->m_ListenOnAdapter || !app->m_ScanAdapters)
             return;
 
         bool searchedAll = true;
