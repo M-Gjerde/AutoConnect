@@ -95,6 +95,7 @@ public:
     explicit AutoConnectLinux(bool enableIPC, bool logToConsole = false) {
         out = {
                 {"Name", "AutoConnect"},
+                {"Version", "v1.0.0"},
                 {"Log",  {""}}
         };
 
@@ -172,6 +173,12 @@ private:
     void sendMessage(caddr_t memPtr, sem_t *semPtr);
 
     void getMessage(caddr_t memPtr, sem_t *semPtr);
+
+    void setAddress();
+
+    void setHostAddress(const std::string &adapterName, const std::string &hostAddress);
+
+    void setMTU(const std::string &adapterName, int mtu = 7200);
 };
 
 
