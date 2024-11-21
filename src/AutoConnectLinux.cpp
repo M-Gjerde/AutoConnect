@@ -220,7 +220,7 @@ void AutoConnectLinux::adapterScan(void *ctx) {
 
 
         for (auto i = ifn; i->if_name; ++i) {
-            struct ECMD {
+            struct {
                 __u32 link_mode_data[3 * 127]{};
                 struct ethtool_link_settings req{};
             } ecmd{};
